@@ -31,6 +31,8 @@ class Plugin {
  public:
   // Please see "event_handlers.h" for a list of supported event handlers and
   // their documentation!
+    
+    void update() {}
 };
 
 } // namespace kaleidoscope

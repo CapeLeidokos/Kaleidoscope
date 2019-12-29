@@ -18,6 +18,7 @@
 #include "kaleidoscope/hid.h"
 #include "kaleidoscope/layers.h"
 #include "kaleidoscope/keyswitch_state.h"
+#include "kaleidoscope/modules.h"
 
 namespace kaleidoscope {
 
@@ -52,6 +53,8 @@ Runtime_::setup(void) {
   for (auto key_addr : KeyAddr::all()) {
     Layer.updateLiveCompositeKeymap(key_addr);
   }
+  
+  KM_EXPORT_SYMBOLS
 }
 
 void
