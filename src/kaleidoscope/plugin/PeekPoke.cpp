@@ -16,6 +16,7 @@
 
 #include "kaleidoscope/plugin/PeekPoke.h"
 #include "kaleidoscope/plugin/FocusSerial.h"
+#include "kaleidoscope/plugin/LEDControl.h"
 
 namespace kaleidoscope {
 namespace plugin {
@@ -41,12 +42,22 @@ struct TransferInfo {
    }
 };
 } // namespace peek_poke
+
+// void showReaction() {
+//    LEDControl::set_all_leds_to(255, 0, 0);
+//    LEDControl::syncLeds();
+//    delay(500);
+//    LEDControl::set_all_leds_to(0, 0, 0);
+//    LEDControl::syncLeds();
+// }
    
 EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
 {
    using namespace peek_poke;
    
-   if(::Focus.handleHelp(command, PSTR("read\nwrite\npeek\npoke\nupdate")))
+   //showReaction();
+   
+   if(::Focus.handleHelp(command, PSTR("read\nwrite\npeek\npoke\ncall")))
     return EventHandlerResult::OK;
    
    if(strcmp_P(command, PSTR("read")) == 0) {
@@ -105,7 +116,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
             break;
       }
    }
-   else if (strcmp_P(command, PSTR("update")) == 0) {
+   else if (strcmp_P(command, PSTR("call")) == 0) {
       uintptr_t addr_int;
       ::Focus.read(addr_int);
       

@@ -4,11 +4,17 @@
 
 # -*- mode: python -*-
 
+# Author: noseglasses (shinynoseglasses@gmail.com)
+
 import os
 import sys
 import re
 import subprocess
 import struct
+import logging
+
+# For ARV, RAM (SRAM) starts at addr 0x0000000000800000
+ram_memory_offset = int("0x0000000000800000", 16)
       
 def is_exe(fpath):
    return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
@@ -24,16 +30,15 @@ def findFirstFile(directory, extension):
          return os.path.join(directory, file)
       
    return None
-
-def error(msg):
-   
-   print "Error: " + msg
    
 class ModuleMember(object):
    
    def __init__(self, module, name):
       self.module = module
       self.name = name
+      self.description = None
+      self.update_function_mangled = None
+      self.update_function_demangled = None
       
    def getName(self):
       return self.module.getName() + "::" + self.name
@@ -50,7 +55,8 @@ class Module(object):
       self.members = {}
       self.modules = {}
       self.description = None
-      self.update_function = None
+      self.update_function_mangled = None
+      self.update_function_demangled = None
       
    def getName(self):
       return self.name
@@ -58,14 +64,19 @@ class Module(object):
    def write(self, target, indent = ""):
       target.write(indent + self.name + "\n")
       target.write(indent + "   description: " + str(self.description) + "\n")
-      target.write(indent + "   update_function: " + str(self.update_function) + "\n")
-      target.write(indent + "   members:\n")
-      for member in self.members.values():
-         member.write(target, indent + "      ")
-      target.write(indent + "   modules:\n")
-      for module in self.modules.values():
-         module.write(target, indent + "      ")
-      
+      target.write(indent + "   update_function_mangled: " + str(self.update_function_mangled) + "\n")
+      target.write(indent + "   update_function_demangled: " + str(self.update_function_demangled) + "\n")
+      if len(self.members) > 0:
+         target.write(indent + "   members:\n")
+         for member in self.members.values():
+            member.write(target, indent + "      ")
+      if len(self.modules) > 0:
+         target.write(indent + "   modules:\n")
+         for module in self.modules.values():
+            module.write(target, indent + "      ")
+
+# This class parses a mangled symbol name and extract related information
+#
 class Symbol(object):
    
    def __init__(self, extractor, name_mangled):
@@ -78,14 +89,13 @@ class Symbol(object):
 
       for module_name in extractor.module_names:
          
-         member_name_regex = 'kaleidoscope::module::' + module_name + '::(_______tag_______|_______members_______|_______info_______)(::([\w:]+))?'
+         member_name_regex = 'kaleidoscope::module::' + module_name \
+            + '::(_______tag_______|_______members_______|_______info_______)' \
+            + '(::([\w:]+))?'
 
          member_info_match = re.match(member_name_regex, self.name_demangled)
          
          if member_info_match == None:
-            #print "No match for mangled \'" + self.name_mangled + "\'"
-            #print "No match for demangled \'" + self.name_demangled + "\'"
-            #print "With regex " + member_name_regex
             continue
          
          self.is_module_symbol = True
@@ -108,21 +118,17 @@ class Symbol(object):
             member_data_match = re.match(member_data_regex, rest)
             
             if not member_data_match:
-               error("Strange member data \'" + rest + "\'")
+               logging.error("Strange member data \'" + rest + "\'")
 
             self.member_name = member_data_match.group(1)
             self.info_type = member_data_match.group(2)
-            
-            #print "Member " + member_name
-            #print "Datum " + member_datum
 
             if not (   (self.info_type == "description") \
                     or (self.info_type == "size") \
                     or (self.info_type == "update_function") \
                     or (self.info_type == "address")):
-               error("Strange module member datum \'" + self.info_type + "\'")
+               logging.error("Strange module member datum \'" + self.info_type + "\'")
          else:
-            #error("Strange datum \'" + member_info_match.group(1) + "\'")
             # Do not report an error to enable nested modules
             pass
      
@@ -166,34 +172,30 @@ class SymbolExtractor(object):
       self.sketch_object = findFirstFile(sketch_obj_dir, '.o')
       
       if not self.sketch_object:
-         error('No sketch object file found')
+         logging.error('Unable to find sketch object file')
       else:
          print 'Sketch object file: ' + self.sketch_object
          
       elf_dir = self.sketch_dir + '/build'
       
-      self.elf_binary = findFirstFile(elf_dir, '.elf')
-      
-      if not self.elf_binary:
-         error('No elf finary found')
-      else:
-         print 'Elf binary file: ' + self.elf_binary
-         
-      elf_dir = self.sketch_dir + '/build'
-      
       self.map_file = findFirstFile(elf_dir, '.map')
+      
+      if not self.map_file:
+         logging.error('Unable to find firmware linker map file')
+      else:
+         print 'Firmware linker map file: ' + self.map_file
          
    def findExecutables(self):
       
       self.objdump_executable = self.binutils_dir + '/' + self.binutils_prefix + 'objdump'
       
       if not is_exe(self.objdump_executable):
-         error('Unable to find objdump executable \'' + self.objdump_executable + '\'')
+         logging.error('Unable to find objdump executable \'' + self.objdump_executable + '\'')
          
       self.cpp_filt_executable = self.binutils_dir + '/' + self.binutils_prefix + 'c++filt'
       
       if not is_exe(self.cpp_filt_executable):
-         error('Unable to find c++filt executable \'' + self.cpp_filt_executable + '\'')
+         logging.error('Unable to find c++filt executable \'' + self.cpp_filt_executable + '\'')
          
    def demangleSymbolName(self, name):
       
@@ -204,21 +206,24 @@ class SymbolExtractor(object):
       
       return o.decode('utf8').rstrip()
    
-   def getValueFromSection(self, symbol_name, section_size):
+   # Retreives the value of a mangled symbol from the sketch object file
+   #
+   def getValueFromSection(self, symbol_name_mangled):
       
-      data = self.getValueFromSectionAux('.rodata.' + symbol_name, section_size)
-      
-      if data != None:
-         return data
-      
-      data = self.getValueFromSectionAux('.data.' + symbol_name, section_size)
+      data = self.getValueFromSectionAux('.rodata.' + symbol_name_mangled)
       
       if data != None:
          return data
       
-      error("Unable to find section for symbol \'" + symbol_name + "\'")
+      data = self.getValueFromSectionAux('.data.' + symbol_name_mangled)
       
-   def getValueFromSectionAux(self, section_name, section_size):
+      if data != None:
+         return data
+      
+      logging.error("Unable to find section for mangled symbol \'" + symbol_name_mangled \
+         + "\' in sketch object file")
+      
+   def getValueFromSectionAux(self, section_name):
       
       cmd = [self.objdump_executable, '-s', '-j', section_name, self.sketch_object]
       proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -235,37 +240,32 @@ class SymbolExtractor(object):
       
       in_data_lines = False 
       for line in lines:
-         #print line
          if in_data_lines:
             data_block = re.match(data_regex, line)
             
             if not data_block:
-               error('Unable to find data block for section \'' + section_name + '\'')
+               logging.error('Unable to find data block for section \'' + section_name \
+                             + '\' in sketch object file')
             
             tokens = data_block.group(1).split()
             
-            #print 'Line: ' + line + ' (' + str(len(tokens)) + ' tokens)'
-            #print 'Data block: ' + data_block.group(1)
             block_regex = "([\da-fA-F][\da-fA-F])"
             for token in tokens:
                
                for byte in re.findall(block_regex, token):
-               
-                  #print 'byte: ' + byte
-                  number = int(byte, 16)
-                  #print number
-               
-                  data.append(number)
+                  data.append(int(byte, 16))
          else:
             if line.find('Contents of section') != -1: 
                in_data_lines = True
          
       if not in_data_lines:
          return None
-         #error("Unable to find value for section \'" + section_name + "\' (" + str(section_size) + ")")
 
       return data
               
+   # Read module and symbol information from the sketch object and the map 
+   # file.
+   #
    def readModulesAndSymbols(self):
       
       cmd = [self.objdump_executable, '-x', self.sketch_object]
@@ -280,7 +280,7 @@ class SymbolExtractor(object):
       self.extractModuleInfo(objdump_output)
       self.parseMapFile()
       self.collectSymbolAddressesOfModule()
-      self.listModules()
+      self.listModules(sys.stdout)
       
    def getModule(self, module_name):
       
@@ -325,7 +325,7 @@ class SymbolExtractor(object):
       
       target_regex_update_function = "\.text\.(\w+)"
       
-      target_regex_address = "\.bss\.(\w+)(\+([\da-fA-Fx]+))?"
+      target_regex_address = "\.(bss|data)\.(\w+)(\+([\da-fA-Fx]+))?"
       
       skip = False
       parse_next_line = False
@@ -347,28 +347,30 @@ class SymbolExtractor(object):
             match = re.match(info_regex, line)
             
             if match == None:
-               error("Strange reloc info line: \'" + line + "\'")
+               logging.error("Strange reloc info line: \'" + line + "\'")
                
             reloc_target = match.group(1)
             
             match = re.match(target_regex_update_function, reloc_target)
             
             if match:
-               target.update_function = match.group(1);
-               print "   " + target.getName() + "::update_function: " + target.update_function
+               target.update_function_mangled = match.group(1);
+               target.update_function_demangled = self.demangleSymbolName(match.group(1))
+               #print "   " + target.getName() + "::update_function: " + target.update_function_demangled
             else:
                #print "target: " + reloc_target
                match = re.match(target_regex_address, reloc_target)
                if match:
-                  target.address_base_symbol = match.group(1)
+                  target.symbol_mangled = match.group(2)
+                  target.symbol_unmangled = self.demangleSymbolName(match.group(2))
                   
-                  if match.group(3):
-                     target.address_offset = match.group(3)
+                  if match.group(4):
+                     target.symbol_offset = int(match.group(4), 16)
                   else:
-                     target.address_offset = "0x0"
+                     target.symbol_offset = 0
                      
-                  print "   " + target.getName() + "::address_base_symbol: " + target.address_base_symbol
-                  print "   " + target.getName() + "::address_offset: " + str(target.address_offset)
+                  #print "   " + target.getName() + "::symbol: " + target.symbol_unmangled
+                  #print "   " + target.getName() + "::offset: " + str(target.symbol_offset)
             
             #print reloc_source + "->" + reloc_target
             
@@ -397,8 +399,6 @@ class SymbolExtractor(object):
             
    def readModules(self, objdump_output):
       
-      #.rodata._ZN12kaleidoscope6module9MyPlugin
-      
       module_regex = "\.(\w+kaleidoscope[0-9]+module[0-9]+\S+)"
       module_candidates = unique(re.findall(module_regex, objdump_output))
       
@@ -415,10 +415,6 @@ class SymbolExtractor(object):
             
             if not module_name in self.module_names:
                self.module_names.append(module_name)
-      
-      #print "Modules:"
-      #for module in self.module_names:
-         #print "   " + module
          
    def extractModuleInfo(self, objdump_output):
       
@@ -432,7 +428,6 @@ class SymbolExtractor(object):
          symbol = Symbol(self, symbol_name_mangled)
          
          if not symbol.is_module_symbol:
-            #print "Non module: " + symbol_name_mangled
             continue
          
          if symbol.is_member_symbol:
@@ -441,9 +436,8 @@ class SymbolExtractor(object):
             target = self.getModule(symbol.module_name)
          
          if symbol.info_type == "description":
-            data = self.getValueFromSection(symbol.name_mangled, 0)
+            data = self.getValueFromSection(symbol.name_mangled)
             target.description = str(bytearray(data))
-            print "   " + target.getName() + "::description: " + target.description
          elif symbol.info_type == "update_function":
             # Parsed from relocation data
             pass
@@ -451,17 +445,19 @@ class SymbolExtractor(object):
             # Parsed from relocation data
             pass
          elif symbol.info_type == "size":
-            data = self.getValueFromSection(symbol.name_mangled, 0)
+            data = self.getValueFromSection(symbol.name_mangled)
             target.size = data[0] + 0xFF*data[1]
-            print "   " + target.getName() + "::" + "size: " + str(target.size)
          else:
-            error("Srange info type \'" + symbol.info_type + "\'")
+            logging.error("Strange info type \'" + symbol.info_type + "\'")
             
+   # The linker map file provides information about where global variables
+   # and functions reside in RAM and PROGMEM, respectively.
+   #
    def parseMapFile(self):
       
       my_file = open(self.map_file, "rt")
       
-      text_regex = '\s+\.(text|bss)\.(\w+)'
+      text_regex = '\s+\.(text|bss|data)\.(\w+)'
       address_line_regex = '\s+(\w+)\s'
       
       self.address_mappings = {}
@@ -480,7 +476,7 @@ class SymbolExtractor(object):
             address_line_match = re.match(address_line_regex, line)
             
             if not address_line_match:
-               error("Strange address line \'" + line + "\'")
+               logging.error("Strange address line \'" + line + "\'")
                
             address = address_line_match.group(1)
             
@@ -496,9 +492,13 @@ class SymbolExtractor(object):
             continue
          
          symbol_mangled = text_match.group(2)
-         #print "Text match: " + symbol_mangled
          parse_next_line = True
          
+   # After the map file has been read, the absolute addresses of
+   # module members and update functions need to be resolved.
+   # This is done by checking the map file and calculating the right
+   # addresses.
+   #
    def collectSymbolAddressesOfModule(self, module = None):
       
       if module == None:
@@ -511,25 +511,29 @@ class SymbolExtractor(object):
          
       for module in module.modules.values():
          self.collectSymbolAddressesOfModule(module)
+         
+      if module.update_function_mangled in self.address_mappings.keys():
+         module.update_function_address = int(self.address_mappings[module.update_function_mangled], 16)
       
    def collectSymbolAddressesOfMember(self, member):
       
-      if member.address_base_symbol in self.address_mappings.keys():
-         #print member.getName() + ":"
-         #print "   base: " + self.address_mappings[member.address_base_symbol] + " (=" + str(int(self.address_mappings[member.address_base_symbol], 16)) + ")"
-         #print "   offset: " + member.address_offset + " (=" + str(int(member.address_offset, 16)) + ")"
-         member.address_abs = int(self.address_mappings[member.address_base_symbol], 16) + int(member.address_offset, 16)
-         #print "   abs: " + str(member.address_abs)
+      if member.symbol_mangled in self.address_mappings.keys():
+         member.address = int(self.address_mappings[member.symbol_mangled], 16) + member.symbol_offset - ram_memory_offset
       else:
-         member.address_abs = "unexported"
-         #print member.getName() + " address function " + member.address_base_symbol + " unexported"
+         member.address = "unexported"
+         
+      if member.update_function_mangled in self.address_mappings.keys():
+         # Function addresses must be divided by two (two byte words)
+         member.update_function_address = int(self.address_mappings[member.update_function_mangled], 16)/2
       
-   def listModules(self):
+   def listModules(self, target):
       
-      print "Modules:"
-      for module in self.modules.values():
-         module.write(sys.stdout)
+      if len(self.modules) > 0:
+         target.write("modules:\n")
+         for module in self.modules.values():
+            module.write(target)
+      else:
+         target.write("no modules\n")
          
 if __name__ == "__main__":
-   
    SymbolExtractor().run()
