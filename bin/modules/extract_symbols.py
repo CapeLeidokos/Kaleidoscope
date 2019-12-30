@@ -12,6 +12,7 @@ import re
 import subprocess
 import struct
 import logging
+import copy
 
 # For ARV, RAM (SRAM) starts at addr 0x0000000000800000
 ram_memory_offset = int("0x0000000000800000", 16)
@@ -30,23 +31,68 @@ def findFirstFile(directory, extension):
          return os.path.join(directory, file)
       
    return None
+
+class UpdateFunction(object):
    
+   def __init__(self, symbol_mangled, symbol_unmangled):
+      self.symbol_mangled = symbol_mangled
+      self.symbol_unmangled = symbol_unmangled
+      self.address = None
+      self.inherited = False
+   
+   def write(self, target, indent = ""):
+      for (key, value) in self.__dict__.items():
+         target.write(indent + "   " + key + ": " + str(value) + "\n")
+   
+class DataEntity(object):
+   
+   def __init__(self):
+      self.symbol_mangled = None
+      self.symbol_unmangled = None
+      self.offset = 0
+      self.size = 0
+      self.address = None
+   
+   def write(self, target, indent = ""):
+      target.write(indent + "   symbol_unmangled: " + str(self.symbol_unmangled) + "\n")
+      target.write(indent + "   symbol_mangled: " + str(self.symbol_mangled) + "\n")
+      target.write(indent + "   address: " + str(self.address) + "\n")
+      target.write(indent + "   offset: " + str(self.offset) + "\n")
+      target.write(indent + "   size: " + str(self.size) + "\n")
+         
 class ModuleMember(object):
    
    def __init__(self, module, name):
-      self.module = module
       self.name = name
       self.description = None
-      self.update_function_mangled = None
-      self.update_function_demangled = None
+      self.update_function = None
+      self.data = DataEntity()
       
    def getName(self):
       return self.module.getName() + "::" + self.name
    
    def write(self, target, indent = ""):
       target.write(indent + self.name + "\n")
-      for (key, value) in self.__dict__.items():
-         target.write(indent + "   " + key + ": " + str(value) + "\n")
+      target.write(indent + "   description: " + str(self.description) + "\n")
+      
+      target.write(indent + "   data:\n")
+      self.data.write(target, indent + "   ")
+      
+      if self.update_function:
+         target.write(indent + "   update_function:\n")
+         self.update_function.write(target, indent + "   ")
+         
+   def getParentUpdateFunction(self):
+      
+      m = self.module
+      
+      while m:
+         if m.update_function:
+            return copy.deepcopy(m.update_function)
+         else:
+            m = m.parent_module
+            
+      return None
    
 class Module(object):
    
@@ -55,8 +101,8 @@ class Module(object):
       self.members = {}
       self.modules = {}
       self.description = None
-      self.update_function_mangled = None
-      self.update_function_demangled = None
+      self.update_function = None
+      self.parent_module = None
       
    def getName(self):
       return self.name
@@ -64,8 +110,10 @@ class Module(object):
    def write(self, target, indent = ""):
       target.write(indent + self.name + "\n")
       target.write(indent + "   description: " + str(self.description) + "\n")
-      target.write(indent + "   update_function_mangled: " + str(self.update_function_mangled) + "\n")
-      target.write(indent + "   update_function_demangled: " + str(self.update_function_demangled) + "\n")
+      if self.update_function:
+         target.write(indent + "   update_function:\n")
+         self.update_function.write(target, indent + "   ")
+         
       if len(self.members) > 0:
          target.write(indent + "   members:\n")
          for member in self.members.values():
@@ -83,7 +131,7 @@ class Symbol(object):
       
       self.extractor = extractor
       self.name_mangled = name_mangled
-      self.name_demangled = extractor.demangleSymbolName(self.name_mangled)
+      self.name_unmangled = extractor.demangleSymbolName(self.name_mangled)
       
       self.is_module_symbol = False
 
@@ -93,7 +141,7 @@ class Symbol(object):
             + '::(_______tag_______|_______members_______|_______info_______)' \
             + '(::([\w:]+))?'
 
-         member_info_match = re.match(member_name_regex, self.name_demangled)
+         member_info_match = re.match(member_name_regex, self.name_unmangled)
          
          if member_info_match == None:
             continue
@@ -287,12 +335,14 @@ class SymbolExtractor(object):
       module_tokens = module_name.split("::")
       
       cur_modules = self.modules
+      cur_module = None
 
       for token in module_tokens:
          
          if not token in cur_modules.keys():
             cur_modules[token] = Module(token)
-            
+            cur_modules[token].parent_module = cur_module
+         
          cur_module = cur_modules[token]
          cur_modules = cur_module.modules
 
@@ -304,6 +354,7 @@ class SymbolExtractor(object):
       
       if not member_name in module.members.keys():
          module.members[member_name] = ModuleMember(module, member_name)
+         module.members[member_name].module = module
          
       return module.members[member_name]
       
@@ -354,20 +405,20 @@ class SymbolExtractor(object):
             match = re.match(target_regex_update_function, reloc_target)
             
             if match:
-               target.update_function_mangled = match.group(1);
-               target.update_function_demangled = self.demangleSymbolName(match.group(1))
-               #print "   " + target.getName() + "::update_function: " + target.update_function_demangled
+               target.update_function \
+                  = UpdateFunction(match.group(1), \
+                                   self.demangleSymbolName(match.group(1)))
             else:
                #print "target: " + reloc_target
                match = re.match(target_regex_address, reloc_target)
                if match:
-                  target.symbol_mangled = match.group(2)
-                  target.symbol_unmangled = self.demangleSymbolName(match.group(2))
+                  target.data.symbol_mangled = match.group(2)
+                  target.data.symbol_unmangled = self.demangleSymbolName(match.group(2))
                   
                   if match.group(4):
-                     target.symbol_offset = int(match.group(4), 16)
+                     target.data.offset = int(match.group(4), 16)
                   else:
-                     target.symbol_offset = 0
+                     target.data.offset = 0
                      
                   #print "   " + target.getName() + "::symbol: " + target.symbol_unmangled
                   #print "   " + target.getName() + "::offset: " + str(target.symbol_offset)
@@ -406,9 +457,9 @@ class SymbolExtractor(object):
       module_cand_regex = "kaleidoscope::module::([:\w]+)::_______tag_______"
       
       for module_candidate in module_candidates:
-         module_candidate_demangled = self.demangleSymbolName(module_candidate)
+         module_candidate_unmangled = self.demangleSymbolName(module_candidate)
          
-         match = re.match(module_cand_regex, module_candidate_demangled)
+         match = re.match(module_cand_regex, module_candidate_unmangled)
          
          if match:
             module_name = match.group(1)
@@ -446,7 +497,7 @@ class SymbolExtractor(object):
             pass
          elif symbol.info_type == "size":
             data = self.getValueFromSection(symbol.name_mangled)
-            target.size = data[0] + 0xFF*data[1]
+            target.data.size = data[0] + 0xFF*data[1]
          else:
             logging.error("Strange info type \'" + symbol.info_type + "\'")
             
@@ -512,19 +563,30 @@ class SymbolExtractor(object):
       for module in module.modules.values():
          self.collectSymbolAddressesOfModule(module)
          
-      if module.update_function_mangled in self.address_mappings.keys():
-         module.update_function_address = int(self.address_mappings[module.update_function_mangled], 16)
+      if module.update_function:
+         if module.update_function.symbol_mangled in self.address_mappings.keys():
+            module.update_function.address \
+               = int(self.address_mappings[module.update_function.symbol_mangled], 16)
       
    def collectSymbolAddressesOfMember(self, member):
       
-      if member.symbol_mangled in self.address_mappings.keys():
-         member.address = int(self.address_mappings[member.symbol_mangled], 16) + member.symbol_offset - ram_memory_offset
+      if member.data.symbol_mangled in self.address_mappings.keys():
+         member.data.address = int(self.address_mappings[member.data.symbol_mangled], 16) + member.data.offset - ram_memory_offset
       else:
-         member.address = "unexported"
-         
-      if member.update_function_mangled in self.address_mappings.keys():
-         # Function addresses must be divided by two (two byte words)
-         member.update_function_address = int(self.address_mappings[member.update_function_mangled], 16)/2
+         member.data.address = "unexported"
+      
+      if member.update_function:
+         if member.update_function.symbol_mangled in self.address_mappings.keys():
+            # Function addresses must be divided by two (two byte words)
+            member.update_function.address \
+               = int(self.address_mappings[member.update_function.symbol_mangled], 16)/2
+         elif member.update_function.symbol_unmangled == "kaleidoscope::module::_______noUpdate_______()":
+            member.update_function = None
+         else:
+            member.update_function.address = "unexported"
+      else:
+         member.update_function = member.getParentUpdateFunction()
+         member.update_function.inherited = True
       
    def listModules(self, target):
       
