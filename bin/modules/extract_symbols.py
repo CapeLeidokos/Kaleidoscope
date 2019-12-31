@@ -16,6 +16,16 @@ import copy
 
 # For ARV, RAM (SRAM) starts at addr 0x0000000000800000
 ram_memory_offset = int("0x0000000000800000", 16)
+
+type_ids = { \
+   0 : "uint8_t", \
+   1 : "uint16_t", \
+   2 : "uint32_t", \
+   3 : "int8_t", \
+   4 : "int16_t", \
+   5 : "int32_t", \
+   6 : "float" \
+   }
       
 def is_exe(fpath):
    return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
@@ -51,6 +61,7 @@ class DataEntity(object):
       self.symbol_unmangled = None
       self.offset = 0
       self.size = 0
+      self.type = None
       self.address = None
    
    def write(self, target, indent = ""):
@@ -59,6 +70,7 @@ class DataEntity(object):
       target.write(indent + "   address: " + str(self.address) + "\n")
       target.write(indent + "   offset: " + str(self.offset) + "\n")
       target.write(indent + "   size: " + str(self.size) + "\n")
+      target.write(indent + "   type: " + str(self.type) + "\n")
          
 class ModuleMember(object):
    
@@ -173,6 +185,7 @@ class Symbol(object):
 
             if not (   (self.info_type == "description") \
                     or (self.info_type == "size") \
+                    or (self.info_type == "type") \
                     or (self.info_type == "update_function") \
                     or (self.info_type == "address")):
                logging.error("Strange module member datum \'" + self.info_type + "\'")
@@ -264,6 +277,11 @@ class SymbolExtractor(object):
          return data
       
       data = self.getValueFromSectionAux('.data.' + symbol_name_mangled)
+      
+      if data != None:
+         return data
+      
+      data = self.getValueFromSectionAux('.bss.' + symbol_name_mangled)
       
       if data != None:
          return data
@@ -498,6 +516,11 @@ class SymbolExtractor(object):
          elif symbol.info_type == "size":
             data = self.getValueFromSection(symbol.name_mangled)
             target.data.size = data[0] + 0xFF*data[1]
+         elif symbol.info_type == "type":
+            data = self.getValueFromSection(symbol.name_mangled)
+            target.data.type = type_ids[data[0]]
+            print symbol.module_name + "::" + symbol.member_name
+            print "type " + str(data[0]) + "->" + type_ids[data[0]]
          else:
             logging.error("Strange info type \'" + symbol.info_type + "\'")
             
