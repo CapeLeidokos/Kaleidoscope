@@ -10,7 +10,6 @@ import os
 import sys
 import re
 import subprocess
-import struct
 import logging
 import copy
 
@@ -87,7 +86,7 @@ class Procedure(object):
       return self.module.getName() + "::" + self.name
    
    def writeYaml(self, target, indent):
-      target.write(indent + "- name:" + self.name + "\n")
+      target.write(indent + "- name: " + self.name + "\n")
       target.write(indent + "  callable:\n")
       self.callable.writeYaml(target, indent + indent_level)
       target.write(indent + "  arguments:\n")
@@ -102,7 +101,7 @@ class Callable(object):
       self.address = None
       
    def writeYaml(self, target, indent):
-      target.write(indent + "- address: " + str(self.address) + "\n")
+      target.write(indent + "  address: " + str(self.address) + "\n")
       target.write(indent + "  symbol_mangled: " + str(self.symbol_mangled) + "\n")
       target.write(indent + "  symbol_unmangled: " + str(self.symbol_unmangled) + "\n")
       
@@ -121,8 +120,8 @@ class DataEntity(object):
       self.base_address = None
       
    def writeYaml(self, target, indent):
-      target.write(indent + "- address: " + str(self.address) + "\n")
-      target.write(indent + "- base_address: " + str(self.base_address) + "\n")
+      target.write(indent + "  address: " + str(self.address) + "\n")
+      target.write(indent + "  base_address: " + str(self.base_address) + "\n")
       target.write(indent + "  offset: " + str(self.offset) + "\n")
       target.write(indent + "  size: " + str(self.size) + "\n")
       target.write(indent + "  type: " + str(self.type) + "\n")
@@ -218,7 +217,7 @@ class Symbol(object):
       for module_name in extractor.module_names:
          
          input_name_regex = 'kaleidoscope::module::' + module_name \
-            + '::(_______tag_______|_______inputs_______|_______procedure_______|_______info_______)' \
+            + '::(_______module_______|_______inputs_______|_______procedure_______|_______info_______)' \
             + '(::([\w:]+))?'
 
          input_info_match = re.match(input_name_regex, self.name_unmangled)
@@ -233,7 +232,7 @@ class Symbol(object):
          sub_type = input_info_match.group(1)
          rest = input_info_match.group(3)
          
-         if sub_type == "_______tag_______":
+         if sub_type == "_______module_______":
             self.is_relevant = False
             break
          elif sub_type == "_______info_______":
@@ -341,6 +340,13 @@ class SymbolExtractor(object):
          logging.error('Unable to find firmware linker map file')
       else:
          print 'Firmware linker map file: ' + self.map_file
+                  
+      self.elf_file = findFirstFile(elf_dir, '.elf')
+      
+      if not self.elf_file:
+         logging.error('Unable to find firmware elf file')
+      else:
+         print 'Firmware elf file: ' + self.elf_file
          
    def findExecutables(self):
       
@@ -348,6 +354,11 @@ class SymbolExtractor(object):
       
       if not is_exe(self.objdump_executable):
          logging.error('Unable to find objdump executable \'' + self.objdump_executable + '\'')
+      
+      self.objcopy_executable = self.binutils_dir + '/' + self.binutils_prefix + 'objcopy'
+      
+      if not is_exe(self.objcopy_executable):
+         logging.error('Unable to find objcopy executable \'' + self.objcopy_executable + '\'')
          
       self.cpp_filt_executable = self.binutils_dir + '/' + self.binutils_prefix + 'c++filt'
       
@@ -443,6 +454,8 @@ class SymbolExtractor(object):
       self.parseMapFile()
       self.collectSymbolAddressesOfModule()
       self.resolveProcedureArgsAbsAddress()
+      
+      self.replaceElfFileChecksum()
       #self.listModules(sys.stdout)
       
       if self.yaml_output_file:
@@ -585,7 +598,7 @@ class SymbolExtractor(object):
       module_candidates = unique(re.findall(module_regex, objdump_output))
       
       self.module_names = []
-      module_cand_regex = "kaleidoscope::module::([:\w]+)::_______tag_______"
+      module_cand_regex = "kaleidoscope::module::([:\w]+)::_______module_______"
       
       for module_candidate in module_candidates:
          module_candidate_unmangled = self.demangleSymbolName(module_candidate)
@@ -823,9 +836,55 @@ class SymbolExtractor(object):
       #else:
          #target.write("no modules\n")
          
+   def computeFileHash64(self, filename):
+      
+      import hashlib
+ 
+      hasher = hashlib.sha1()
+      with open(filename, 'rb') as afile:
+         buf = afile.read()
+         hasher.update(buf)
+         
+      return int(hasher.hexdigest(), 16) % (2 ** 64)
+   
+   def replaceElfFileChecksum(self):
+      
+      data = self.getValueFromSectionAux('.progmem.data._ZN12kaleidoscope6module17firmware_checksumE')
+      
+      checksum = 0
+      for datum in data:
+         checksum += datum
+      
+      checksum = self.computeFileHash64(self.sketch_object)
+      
+      import struct
+      self.checksum_bytearray = bytearray(struct.pack('<Q', checksum))
+      
+      if checksum != 0:
+         print "Checksum " + str(map(hex, data)) + " already set"
+         return
+      
+      checksum_file = self.sketch_object + '.checksum'
+      with open(checksum_file, 'w+b') as f:
+         f.write(self.checksum_bytearray)
+         
+      print "Setting checksum " + str(hex(checksum))
+      
+      cmd = [self.objcopy_executable, "--update-section", ".progmem.data._ZN12kaleidoscope6module17firmware_checksumE=" + checksum_file, self.sketch_object]
+      
+      proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+      o, e = proc.communicate()
+         
    def writeYaml(self, target):
       
-      target.write("- modules:\n")
+      target.write("checksum: ")
+      
+      for byte in self.checksum_bytearray:
+         target.write(str(hex(byte)) + " ")
+      target.write("\n")
+      
+      target.write("modules:\n")
       if len(self.modules) > 0:
          for module in self.modules.values():
             module.writeYaml(target, indent_level)

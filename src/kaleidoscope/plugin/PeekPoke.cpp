@@ -19,6 +19,11 @@
 #include "kaleidoscope/plugin/LEDControl.h"
 
 namespace kaleidoscope {
+
+namespace module {
+   extern const PROGMEM int8_t firmware_checksum[8];
+}
+
 namespace plugin {
 namespace peek_poke {
 struct TransferInfo {
@@ -57,7 +62,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
    
    //showReaction();
    
-   if(::Focus.handleHelp(command, PSTR("read\nwrite\npeek\npoke\ncall")))
+   if(::Focus.handleHelp(command, PSTR("read\nwrite\npeek\npoke\ncall\nchecksum")))
     return EventHandlerResult::OK;
    
    if(strcmp_P(command, PSTR("read")) == 0) {
@@ -125,6 +130,15 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
       auto f = (Func)addr_int;
       
       f();
+   }
+   else if (strcmp_P(command, PSTR("checksum")) == 0) {
+      
+      char hash[8];
+      memcpy_P (hash, kaleidoscope::module::firmware_checksum, 8);
+      
+      for(uint8_t i = 0; i < 8; ++i) {
+         ::Focus.send(hash[i]);
+      }
    }
    else {
     return EventHandlerResult::OK;
