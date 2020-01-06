@@ -33,7 +33,7 @@ class Communicator(object):
       parser.add_argument('--kaleidoscope_repo_dir', \
                            help = 'The path to the Kaleidoscope repository directory')
       parser.add_argument('--yaml_model_file', \
-                           help = 'The filename of a yaml input file containing module information',
+                           help = 'The filename of a yaml input file containing package information',
                            default = '')
       
       parser.add_argument('remaining_args', nargs=argparse.REMAINDER)
@@ -56,34 +56,34 @@ class Communicator(object):
 
       with open(self.yaml_model_file) as f:
     
-         self.module_tree = yaml.safe_load(f)
+         self.package_tree = yaml.safe_load(f)
          #print(data)
          
-   def getModule(self, module_path_tokens):
+   def getPackage(self, package_path_tokens):
       
-      if not "modules" in self.module_tree.keys():
-         raise RuntimeError('No modules defined in yaml file')
+      if not "packages" in self.package_tree.keys():
+         raise RuntimeError('No packages defined in yaml file')
          
-      modules = self.module_tree["modules"]
-      result_module = None
+      packages = self.package_tree["packages"]
+      result_package = None
       
-      for path_token in module_path_tokens:
+      for path_token in package_path_tokens:
       
-         while(modules != None):
-            for module in modules:
-               if module["name"] == path_token:
-                  result_module = module
-                  if "modules" in module.keys():
-                     modules = module["modules"]
+         while(packages != None):
+            for package in packages:
+               if package["name"] == path_token:
+                  result_package = package
+                  if "packages" in package.keys():
+                     packages = package["packages"]
                   else:
-                     modules = None
+                     packages = None
                   break
             break
                
-         if result_module == None:
-            raise RuntimeError('Unable to resolve module path \'' + "::".join(module_path_tokens))
+         if result_package == None:
+            raise RuntimeError('Unable to resolve package path \'' + "::".join(package_path_tokens))
                   
-      return result_module
+      return result_package
          
    def findProcedure(self, proc_name):
       
@@ -92,14 +92,14 @@ class Communicator(object):
       if len(proc_name_tokens) < 2:
          raise RuntimeError('Strange procedure name \'' + proc_name + '\'')
          
-      module = self.getModule(proc_name_tokens[:-1])
+      package = self.getPackage(proc_name_tokens[:-1])
 
       proc_name = proc_name_tokens[-1]
       
-      if not "procedures" in module.keys():
-         raise RuntimeError('No procedures defined in module ' + "::".join(proc_name_tokens[:-1]))
+      if not "procedures" in package.keys():
+         raise RuntimeError('No procedures defined in package ' + "::".join(proc_name_tokens[:-1]))
       else:
-         procs = module["procedures"]
+         procs = package["procedures"]
          the_proc = None
          for proc in procs:
             if proc["name"] == proc_name:
@@ -107,7 +107,7 @@ class Communicator(object):
                break
             
          if the_proc == None:
-            raise RuntimeError('Unable to find procedure \'' + proc_name + '\' in module \'' + "".join(proc_name_tokens[:-1], "::"))
+            raise RuntimeError('Unable to find procedure \'' + proc_name + '\' in package \'' + "".join(proc_name_tokens[:-1], "::"))
          else:
             return the_proc
          
@@ -118,14 +118,14 @@ class Communicator(object):
       if len(input_name_tokens) < 2:
          raise RuntimeError('Strange input name \'' + input_name + '\'')
          
-      module = self.getModule(input_name_tokens[:-1])
+      package = self.getPackage(input_name_tokens[:-1])
 
       input_name = input_name_tokens[-1]
       
-      if not "inputs" in module.keys():
-         raise RuntimeError('No inputs defined in module' + "::".join(input_name_tokens[:-1]))
+      if not "inputs" in package.keys():
+         raise RuntimeError('No inputs defined in package' + "::".join(input_name_tokens[:-1]))
       else:
-         inputs = module["inputs"]
+         inputs = package["inputs"]
          the_input = None
          for an_input in inputs:
             if an_input["name"] == input_name:
@@ -133,7 +133,7 @@ class Communicator(object):
                break
             
          if the_input == None:
-            raise RuntimeError('Unable to find input \'' + input_name + '\' in module \'' + "".join(proc_name_tokens[:-1], "::"))
+            raise RuntimeError('Unable to find input \'' + input_name + '\' in package \'' + "".join(proc_name_tokens[:-1], "::"))
          else:
             return the_input
       
@@ -149,7 +149,7 @@ class Communicator(object):
          raise RuntimeError('Procedure argument size ' + str(size_bytes) + \
             ' currently unsupported')
       
-      cmd = [self.focus_test_executable, "poke", str(address), \
+      cmd = [self.focus_test_executable, "remote.poke", str(address), \
                                          str(size_bytes), str(transfer_value)]
       proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -161,7 +161,7 @@ class Communicator(object):
       
       import ctypes
       
-      cmd = [self.focus_test_executable, "peek", str(address), \
+      cmd = [self.focus_test_executable, "remote.peek", str(address), \
                                          str(size_bytes)]
       proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -212,8 +212,12 @@ class Communicator(object):
       
       transfer_value = self.pokeValue(arg_dict["data"]["address"], arg_dict["data"]["size"], value_str)
       
-   def retreiveValue(self, arg_dict):
-      return self.peekValue(arg_dict["data"]["address"], arg_dict["data"]["size"])
+   def retreiveValue(self, datum_dict):
+      value_str = self.peekValue(datum_dict["data"]["address"], datum_dict["data"]["size"])
+      
+      self.verifyValue(datum_dict["name"], datum_dict["data"]["type"], value_str)
+      
+      return value_str
    
    def assignProcArgs(self, proc_name, args, args_pairs):
       
@@ -256,12 +260,21 @@ class Communicator(object):
       #print("Args accepted: " + str(arg_names_accepted))
       #print("Args supplied: " + str(arg_names_supplied))
       
-      for (name, value) in args_supplied.items():
-         self.assignValue(args_accepted[name], value)
+      if len(args_supplied) > 0:
+         print("Args:")
+         for (name, value) in args_supplied.items():
+            self.assignValue(args_accepted[name], value)
+         
+   def readProcResults(self, proc_name, results):
+      if len(results) > 0:
+         print("Results:")
+         for result in results:
+            value = self.retreiveValue(result)
+            print("   " + result["name"] + ": " + str(value))
          
    def invokeCallable(self, address):
             
-      cmd = [self.focus_test_executable, "call", str(address)]
+      cmd = [self.focus_test_executable, "remote.call", str(address)]
       proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
       o, e = proc.communicate()
@@ -272,6 +285,8 @@ class Communicator(object):
       self.assignProcArgs(name, proc['arguments'], args_pairs)
       
       self.invokeCallable(proc['callable']['address'])
+      
+      self.readProcResults(name, proc['results'])
       
    def setInput(self, input_name, value_str):
       
@@ -293,7 +308,7 @@ class Communicator(object):
          raise RuntimeError('No commands provided')
          
       # Make sure the firmware that is running on the device is the same
-      # that was used to generate the module information.
+      # that was used to generate the package information.
       #
       # TODO: This is currently not supported as there is no build step
       #       available that would allow us to save the checksum in 
@@ -307,10 +322,11 @@ class Communicator(object):
          else:
             proc_name = self.remaining_args[1]
             
-            print("Calling procedure " + proc_name)
-            print("Args: " + str(self.remaining_args[2:]))
+            print("Calling Kaleidoscope procedure " + proc_name)
+            #print("Args: " + str(self.remaining_args[2:]))
             
             self.callProcedure(proc_name, self.remaining_args[2:])
+            
       elif self.remaining_args[0] == "set_input":
          if len(self.remaining_args) < 2:
             raise RuntimeError('Subcommand \'set_input\' requires an input name as second argument')
@@ -322,6 +338,7 @@ class Communicator(object):
                raise RuntimeError('Subcommand \'set_input\' requires a value as third argument')
             
             self.setInput(input_name, self.remaining_args[2])
+            
       elif self.remaining_args[0] == "get_input":
          if len(self.remaining_args) < 2:
             raise RuntimeError('Subcommand \'get_input\' requires an input name as second argument')
@@ -331,7 +348,7 @@ class Communicator(object):
             
    def validateChecksum(self):
       
-      checksum_tokens_expected = self.module_tree['checksum'].split(' ')
+      checksum_tokens_expected = self.package_tree['checksum'].split(' ')
       checksum_bytes_expected = map(int, checksum_tokens_expected)
       
       cmd = [self.focus_test_executable, "call", str(address)]

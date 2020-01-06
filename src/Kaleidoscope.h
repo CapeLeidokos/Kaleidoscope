@@ -36,6 +36,11 @@ void setup();
 #include <math.h>
 #include <stdint.h>
 
+// Important: Leave the remote_call header to be the first one in the
+//            include list as other headers might depend upon it.
+//
+#include "kaleidoscope/remote_call.h"
+
 #include "kaleidoscope/device/device.h"
 #include "kaleidoscope/device/key_indexes.h"
 #include "kaleidoscope_internal/device.h"
@@ -119,3 +124,31 @@ typedef kaleidoscope::Runtime_  Kaleidoscope_;
 // Kaleidoscope in global namespace.
 //
 extern kaleidoscope::Runtime_ &Kaleidoscope;
+
+// Have a list of plugins that are always added. 
+// Those plugins might be configured by macros defined at the top of the sketch.
+// Plugins can thus be turned into complete no-ops.
+//
+#include "kaleidoscope/plugin/RemoteCall.h"
+
+// For some applications we need a plugin that can serve as a dummy.
+// It is only required in the sketch compilation unit
+//
+#ifdef KALEIDOSCOPE_SKETCH
+namespace kaleidoscope {
+extern Plugin NoOpPlugin;
+} // namespace kaleidoscope
+#endif
+
+// Plugins leading the list passed to KALEIDOSCOPE_INIT_PLUGINS
+//
+#define KALEIDOSCOPE_STANDARD_PLUGINS_START RemoteCall
+
+// Plugins trailing the list passed to KALEIDOSCOPE_INIT_PLUGINS
+//
+// Note: As long as we do not actually pass a plugin to 
+//       KALEIDOSCOPE_STANDARD_PLUGINS_END, we need to pass at least
+//       a no-op plugin to satisfy the interface. The NoOpPlugin
+//       can be replaced as soon as other plugins are added.
+//
+#define KALEIDOSCOPE_STANDARD_PLUGINS_END kaleidoscope::NoOpPlugin

@@ -14,18 +14,21 @@
  * this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "kaleidoscope/plugin/PeekPoke.h"
+#include "kaleidoscope/plugin/RemoteCall.h"
+
+#ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
+
 #include "kaleidoscope/plugin/FocusSerial.h"
 #include "kaleidoscope/plugin/LEDControl.h"
 
 namespace kaleidoscope {
 
-namespace module {
+namespace remote_call {
    extern const PROGMEM int8_t firmware_checksum[8];
 }
 
 namespace plugin {
-namespace peek_poke {
+namespace remote_call {
 struct TransferInfo {
    uintptr_t addr_int_;
    uint16_t size_bytes_;
@@ -46,7 +49,7 @@ struct TransferInfo {
       *(_T*)addr_int_ = data;
    }
 };
-} // namespace peek_poke
+} // namespace remote_call
 
 // void showReaction() {
 //    LEDControl::set_all_leds_to(255, 0, 0);
@@ -56,16 +59,35 @@ struct TransferInfo {
 //    LEDControl::syncLeds();
 // }
    
-EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
+EventHandlerResult RemoteCall_::onFocusEvent(const char *command)
 {
-   using namespace peek_poke;
+   using namespace remote_call;
    
    //showReaction();
    
-   if(::Focus.handleHelp(command, PSTR("read\nwrite\npeek\npoke\ncall\nchecksum")))
+   // The number of chars of the string "remote."
+   //
+   constexpr uint8_t cmd_start_offset = 7;
+   
+   #ifdef KALEIDOSCOPE_REMOTE_CALL_HAVE_FIRMWARE_CHECKSUM
+   #define FIRMWARE_CHECKSUM_COMMAND "\nremote.checksum"
+   #else
+   #define FIRMWARE_CHECKSUM_COMMAND
+   #endif
+   
+   if(::Focus.handleHelp(command, 
+      PSTR(  "remote.read"
+           "\nremote.write"
+           "\nremote.peek"
+           "\nremote.poke"
+           "\nremote.call" 
+           FIRMWARE_CHECKSUM_COMMAND
+          )
+      )
+   )
     return EventHandlerResult::OK;
    
-   if(strcmp_P(command, PSTR("read")) == 0) {
+   if(strcmp_P(command + cmd_start_offset, PSTR("read")) == 0) {
       
       TransferInfo ti;
          
@@ -74,7 +96,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
          ::Focus.send(*addr);
       }
    }
-   else if(strcmp_P(command, PSTR("write")) == 0) {
+   else if(strcmp_P(command + cmd_start_offset, PSTR("write")) == 0) {
       
       TransferInfo ti;
       
@@ -85,7 +107,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
          *addr = data;
       }
    }
-   else if(strcmp_P(command, PSTR("peek")) == 0) {
+   else if(strcmp_P(command + cmd_start_offset, PSTR("peek")) == 0) {
       TransferInfo ti;
       
       switch(ti.size_bytes_) {
@@ -103,7 +125,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
             break;
       }
    }
-   else if(strcmp_P(command, PSTR("poke")) == 0) {
+   else if(strcmp_P(command + cmd_start_offset, PSTR("poke")) == 0) {
       TransferInfo ti;
       
       switch(ti.size_bytes_) {
@@ -121,7 +143,7 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
             break;
       }
    }
-   else if (strcmp_P(command, PSTR("call")) == 0) {
+   else if (strcmp_P(command + cmd_start_offset, PSTR("call")) == 0) {
       uintptr_t addr_int;
       ::Focus.read(addr_int);
       
@@ -131,15 +153,17 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
       
       f();
    }
-   else if (strcmp_P(command, PSTR("checksum")) == 0) {
+   #ifdef KALEIDOSCOPE_REMOTE_CALL_HAVE_FIRMWARE_CHECKSUM
+   else if (strcmp_P(command + cmd_start_offset, PSTR("checksum")) == 0) {
       
       char hash[8];
-      memcpy_P (hash, kaleidoscope::module::firmware_checksum, 8);
+      memcpy_P (hash, kaleidoscope::remote_call::firmware_checksum, 8);
       
       for(uint8_t i = 0; i < 8; ++i) {
          ::Focus.send(hash[i]);
       }
    }
+   #endif
    else {
     return EventHandlerResult::OK;
    }
@@ -150,4 +174,6 @@ EventHandlerResult PeekPoke_::onFocusEvent(const char *command)
 } // namespace plugin
 } // namespace kaleidoscope
 
-kaleidoscope::plugin::PeekPoke_ PeekPoke;
+#endif // #ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
+
+kaleidoscope::plugin::RemoteCall_ RemoteCall;

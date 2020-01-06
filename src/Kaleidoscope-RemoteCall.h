@@ -1,5 +1,6 @@
-/* Kaleidoscope - Firmware for computer input devices
- * Copyright (C) 2013-2019  Keyboard.io, Inc.
+/* -*- mode: c++ -*-
+ * Kaleidoscope-OneShot -- One-shot modifiers and layers
+ * Copyright (C) 2016-2018  Keyboard.io, Inc.
  *
  * This program is free software: you can redistribute it and/or modify it under
  * the terms of the GNU General Public License as published by the Free Software
@@ -16,16 +17,5 @@
 
 #pragma once
 
-#include "kaleidoscope/plugin.h"
-
-namespace kaleidoscope {
-namespace plugin {
-class PeekPoke_ : public kaleidoscope::Plugin {
- public:
-
-  EventHandlerResult onFocusEvent(const char *command);
-};
-}
-}
-
-extern kaleidoscope::plugin::PeekPoke_ PeekPoke;
+#include "Kaleidoscope.h"
+#include "kaleidoscope/plugin/RemoteCall.h"

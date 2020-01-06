@@ -33,6 +33,7 @@ SYMBOL_TYPE_MODULE = 1
 SYMBOL_TYPE_MODULE_MEMBER = 2
 SYMBOL_TYPE_PROCEDURE = 3
 SYMBOL_TYPE_PROCEDURE_ARG = 4
+SYMBOL_TYPE_PROCEDURE_RESULT = 5
       
 def is_exe(fpath):
    return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
@@ -53,7 +54,7 @@ def dump_object(obj, target = sys.stdout, indent = ""):
    for (key, value) in obj.__dict__.items():
       target.write(indent + key + ": " + str(value) + "\n")
 
-class ProcedureArgument(object):
+class ProcedureIODatum(object):
    
    def __init__(self, procedure, name):
       self.name = name
@@ -69,21 +70,29 @@ class ProcedureArgument(object):
 
 class Procedure(object):
    
-   def __init__(self, module, name):
-      self.module = module
+   def __init__(self, package, name):
+      self.package = package
       self.name = name
       self.callable = None
       self.arguments = {}
+      self.results = {}
       
    def getArgument(self, name):
       
       if not name in self.arguments.keys():
-         self.arguments[name] = ProcedureArgument(self, name)
+         self.arguments[name] = ProcedureIODatum(self, name)
          
       return self.arguments[name]
       
+   def getResult(self, name):
+      
+      if not name in self.results.keys():
+         self.results[name] = ProcedureIODatum(self, name)
+         
+      return self.results[name]
+      
    def getName(self):
-      return self.module.getName() + "::" + self.name
+      return self.package.getName() + "::" + self.name
    
    def writeYaml(self, target, indent):
       target.write(indent + "- name: " + self.name + "\n")
@@ -91,6 +100,9 @@ class Procedure(object):
       self.callable.writeYaml(target, indent + indent_level)
       target.write(indent + "  arguments:\n")
       for arg in self.arguments.values():
+         arg.writeYaml(target, indent + indent_level)
+      target.write(indent + "  results:\n")
+      for arg in self.results.values():
          arg.writeYaml(target, indent + indent_level)
 
 class Callable(object):
@@ -132,14 +144,14 @@ class DataEntity(object):
          
 class Input(object):
    
-   def __init__(self, module, name):
+   def __init__(self, package, name):
       self.name = name
       self.description = ""
       self.callable = None
       self.data = DataEntity()
       
    def getName(self):
-      return self.module.getName() + "::" + self.name
+      return self.package.getName() + "::" + self.name
    
    def writeYaml(self, target, indent = ""):
       target.write(indent + "- name: " + self.name + "\n")
@@ -155,26 +167,26 @@ class Input(object):
          
    def getParentCallable(self):
       
-      m = self.module
+      m = self.package
       
       while m:
          if m.callable:
             return copy.deepcopy(m.callable)
          else:
-            m = m.parent_module
+            m = m.parent_package
             
       return None
    
-class Module(object):
+class Package(object):
    
    def __init__(self, name):
       self.name = name
       self.inputs = {}
       self.procedures = {}
-      self.modules = {}
+      self.packages = {}
       self.description = ""
       self.callable = None
-      self.parent_module = None
+      self.parent_package = None
       
    def getName(self):
       return self.name
@@ -196,10 +208,10 @@ class Module(object):
          for procedure in self.procedures.values():
             procedure.writeYaml(target, indent + indent_level)
             
-      if len(self.modules) > 0:
-         target.write(indent + "  modules:\n")
-         for module in self.modules.values():
-            module.writeYaml(target, indent + indent_level)
+      if len(self.packages) > 0:
+         target.write(indent + "  packages:\n")
+         for package in self.packages.values():
+            package.writeYaml(target, indent + indent_level)
 
 # This class parses a mangled symbol name and extract related information
 #
@@ -214,10 +226,10 @@ class Symbol(object):
       
       self.is_relevant = False
 
-      for module_name in extractor.module_names:
+      for package_name in extractor.package_names:
          
-         input_name_regex = 'kaleidoscope::module::' + module_name \
-            + '::(_______module_______|_______inputs_______|_______procedure_______|_______info_______)' \
+         input_name_regex = 'kaleidoscope::remote_call::' + package_name \
+            + '::(_______package_______|_______inputs_______|_______procedure_______|_______info_______)' \
             + '(::([\w:]+))?'
 
          input_info_match = re.match(input_name_regex, self.name_unmangled)
@@ -227,12 +239,12 @@ class Symbol(object):
          
          self.is_relevant = True
          self.symbol_type = SYMBOL_TYPE_MODULE
-         self.module_name = module_name
+         self.package_name = package_name
          
          sub_type = input_info_match.group(1)
          rest = input_info_match.group(3)
          
-         if sub_type == "_______module_______":
+         if sub_type == "_______package_______":
             self.is_relevant = False
             break
          elif sub_type == "_______info_______":
@@ -255,7 +267,7 @@ class Symbol(object):
                     or (self.info_type == "type") \
                     or (self.info_type == "callable") \
                     or (self.info_type == "address")):
-               logging.error("Strange module input datum \'" + self.info_type + "\'")
+               logging.error("Strange package input datum \'" + self.info_type + "\'")
                
          elif sub_type == "_______procedure_______":
          
@@ -269,39 +281,39 @@ class Symbol(object):
                self.info_type = proc_data_match.group(2)
             else:
                
-               args_info_regex = '(\w+)::_______arguments_______::(\w+)::_______info_______::(\w+)'
-               args_data_match = re.match(args_info_regex, rest)
+               args_info_regex = '(\w+)::(_______arguments_______|_______results_______)::(\w+)::_______info_______::(\w+)'
+               data_match = re.match(args_info_regex, rest)
                
-               if not args_data_match:
+               if data_match:
+                  if data_match.group(2) == "_______arguments_______":
+                     self.symbol_type = SYMBOL_TYPE_PROCEDURE_ARG
+                  elif data_match.group(2) == "_______results_______":
+                     self.symbol_type = SYMBOL_TYPE_PROCEDURE_RESULT
+                     
+                  self.proc_name = data_match.group(1)
+                  self.bio_name = data_match.group(3)
+                  self.info_type = data_match.group(4)
+               else:
                   logging.error("Strange procedure args data \'" + rest + "\'") 
-                  
-               self.symbol_type = SYMBOL_TYPE_PROCEDURE_ARG
-                  
-               self.proc_name = args_data_match.group(1)
-               self.arg_name = args_data_match.group(2)
-               self.info_type = args_data_match.group(3)
          else:
-            # Do not report an error to enable nested modules
+            # Do not report an error to enable nested packages
             pass
      
 class SymbolExtractor(object):
    
    def __init__(self):
       
-      self.modules = {}
+      self.packages = {}
       
       self.parseCommandLineArgs()
       self.findExecutables()
       self.findBuildArtifacts()
       
-   def run(self):
-      self.readModulesAndSymbols()
-      
    def parseCommandLineArgs(self):
       
       import argparse
 
-      parser = argparse.ArgumentParser(description='Extracts module information from Kaleidoscope binaries.')
+      parser = argparse.ArgumentParser(description='Extracts package information from Kaleidoscope binaries.')
             
       parser.add_argument('--sketch_dir', \
                            help = 'Base build directory with sketch information')
@@ -435,72 +447,44 @@ class SymbolExtractor(object):
          return None
 
       return data
-              
-   # Read module and symbol information from the sketch object and the map 
-   # file.
-   #
-   def readModulesAndSymbols(self):
       
-      cmd = [self.objdump_executable, '-x', self.sketch_object]
-      proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+   def getPackage(self, package_name):
+      
+      package_tokens = package_name.split("::")
+      
+      cur_packages = self.packages
+      cur_package = None
 
-      o, e = proc.communicate()
-      
-      objdump_output = o.decode('utf8')
-      
-      self.readModules(objdump_output)
-      self.readRelocationInfo(objdump_output)
-      self.extractModuleInfo(objdump_output)
-      self.parseMapFile()
-      self.collectSymbolAddressesOfModule()
-      self.resolveProcedureArgsAbsAddress()
-      
-      self.replaceElfFileChecksum()
-      #self.listModules(sys.stdout)
-      
-      if self.yaml_output_file:
-         with open(self.yaml_output_file, 'w') as yaml_file:
-            self.writeYaml(yaml_file)
-      else:
-         self.writeYaml(sys.stdout)
-      
-   def getModule(self, module_name):
-      
-      module_tokens = module_name.split("::")
-      
-      cur_modules = self.modules
-      cur_module = None
+      for token in package_tokens:
+         
+         if not token in cur_packages.keys():
+            cur_packages[token] = Package(token)
+            cur_packages[token].parent_package = cur_package
+         
+         cur_package = cur_packages[token]
+         cur_packages = cur_package.packages
 
-      for token in module_tokens:
-         
-         if not token in cur_modules.keys():
-            cur_modules[token] = Module(token)
-            cur_modules[token].parent_module = cur_module
-         
-         cur_module = cur_modules[token]
-         cur_modules = cur_module.modules
-
-      return cur_module
+      return cur_package
       
-   def getInput(self, module_name, input_name):
+   def getInput(self, package_name, input_name):
          
-      module = self.getModule(module_name)
+      package = self.getPackage(package_name)
       
-      if not input_name in module.inputs.keys():
-         module.inputs[input_name] = Input(module, input_name)
-         module.inputs[input_name].module = module
+      if not input_name in package.inputs.keys():
+         package.inputs[input_name] = Input(package, input_name)
+         package.inputs[input_name].package = package
          
-      return module.inputs[input_name]
+      return package.inputs[input_name]
    
-   def getModuleProcedure(self, module_name, procedure_name):
+   def getPackageProcedure(self, package_name, procedure_name):
          
-      module = self.getModule(module_name)
+      package = self.getPackage(package_name)
       
-      if not procedure_name in module.procedures.keys():
-         module.procedures[procedure_name] = Procedure(module, procedure_name)
-         module.procedures[procedure_name].module = module
+      if not procedure_name in package.procedures.keys():
+         package.procedures[procedure_name] = Procedure(package, procedure_name)
+         package.procedures[procedure_name].package = package
          
-      return module.procedures[procedure_name]
+      return package.procedures[procedure_name]
    
    def readRelocationLine(self, line, symbol):
       
@@ -511,13 +495,15 @@ class SymbolExtractor(object):
          logging.error("Strange reloc info line: \'" + line + "\'")
          
       if symbol.symbol_type == SYMBOL_TYPE_MODULE_MEMBER:
-         target = self.getInput(symbol.module_name, symbol.input_name)
+         target = self.getInput(symbol.package_name, symbol.input_name)
       elif symbol.symbol_type == SYMBOL_TYPE_MODULE:
-         target = self.getModule(symbol.module_name)
+         target = self.getPackage(symbol.package_name)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE:
-         target = self.getModuleProcedure(symbol.module_name, symbol.proc_name)
+         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
-         target = self.getModuleProcedure(symbol.module_name, symbol.proc_name).getArgument(symbol.proc_arg)
+         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name).getArgument(symbol.proc_arg)
+      elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT:
+         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name).getResult(symbol.proc_arg)
       else:
          logging.error("Strange symbol type " + str(symbol.symbol_type))
          dump_object(symbol, sys.stdout, indent_level)
@@ -585,38 +571,38 @@ class SymbolExtractor(object):
          if not symbol.is_relevant:
             continue
          
-         #print "Is module symbol"
+         #print "Is package symbol"
          if    (symbol.info_type == "callable") \
             or (symbol.info_type == "address"):
             #print "Parsing next line"
             skip = True
             parse_next_line = True
             
-   def readModules(self, objdump_output):
+   def readPackages(self, objdump_output):
       
-      module_regex = "\.(\w+kaleidoscope[0-9]+module[0-9]+\S+)"
-      module_candidates = unique(re.findall(module_regex, objdump_output))
+      package_regex = "\.(\w+kaleidoscope[0-9]+remote_call[0-9]+\S+)"
+      package_candidates = unique(re.findall(package_regex, objdump_output))
       
-      self.module_names = []
-      module_cand_regex = "kaleidoscope::module::([:\w]+)::_______module_______"
+      self.package_names = []
+      package_cand_regex = "kaleidoscope::remote_call::([:\w]+)::_______package_______"
       
-      for module_candidate in module_candidates:
-         module_candidate_unmangled = self.demangleSymbolName(module_candidate)
+      for package_candidate in package_candidates:
+         package_candidate_unmangled = self.demangleSymbolName(package_candidate)
          
-         match = re.match(module_cand_regex, module_candidate_unmangled)
+         match = re.match(package_cand_regex, package_candidate_unmangled)
          
          if match:
-            module_name = match.group(1)
+            package_name = match.group(1)
             
-            if not module_name in self.module_names:
-               self.module_names.append(module_name)
+            if not package_name in self.package_names:
+               self.package_names.append(package_name)
          
-   def extractModuleInfo(self, objdump_output):
+   def extractPackageInfo(self, objdump_output):
       
       print ""
       
-      module_regex = '\.(\w+kaleidoscope[0-9]+module\w+)'
-      symbol_names_mangled = unique(re.findall(module_regex, objdump_output))
+      package_regex = '\.(\w+kaleidoscope[0-9]+remote_call\w+)'
+      symbol_names_mangled = unique(re.findall(package_regex, objdump_output))
       
       for symbol_name_mangled in symbol_names_mangled:
          
@@ -627,7 +613,7 @@ class SymbolExtractor(object):
          
          if symbol.symbol_type == SYMBOL_TYPE_MODULE:
             
-            target = self.getModule(symbol.module_name)
+            target = self.getPackage(symbol.package_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -639,11 +625,11 @@ class SymbolExtractor(object):
                # Parsed from relocation data
                pass
             else:
-               logging.error("Strange module info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package info type \'" + symbol.info_type + "\'")
                
          elif symbol.symbol_type == SYMBOL_TYPE_MODULE_MEMBER:
             
-            target = self.getInput(symbol.module_name, symbol.input_name)
+            target = self.getInput(symbol.package_name, symbol.input_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -661,11 +647,11 @@ class SymbolExtractor(object):
                data = self.getValueFromSection(symbol.name_mangled)
                target.data.type = type_ids[data[0]]
             else:
-               logging.error("Strange module input info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package input info type \'" + symbol.info_type + "\'")
                
          elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE:
             
-            target = self.getModuleProcedure(symbol.module_name, symbol.proc_name)
+            target = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -674,12 +660,17 @@ class SymbolExtractor(object):
                # Parsed from relocation data
                pass
             else:
-               logging.error("Strange module procedure info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package procedure info type \'" + symbol.info_type + "\'")
                
-         elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
+         elif (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG) \
+            or (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT):
             
-            proc = self.getModuleProcedure(symbol.module_name, symbol.proc_name)
-            target = proc.getArgument(symbol.arg_name)
+            proc = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
+            
+            if symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
+               target = proc.getArgument(symbol.bio_name)
+            else:
+               target = proc.getResult(symbol.bio_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -694,7 +685,7 @@ class SymbolExtractor(object):
                data = self.getValueFromSection(symbol.name_mangled)
                target.data.type = type_ids[data[0]]
             else:
-               logging.error("Strange module procedure argument info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package procedure argument info type \'" + symbol.info_type + "\'")
                
          else:
             logging.error("Strange symbol type \'" + str(symbol.symbol_type) + "\'")
@@ -747,28 +738,28 @@ class SymbolExtractor(object):
          parse_next_line = True
          
    # After the map file has been read, the absolute addresses of
-   # module inputs and update procedures need to be resolved.
+   # package inputs and update procedures need to be resolved.
    # This is done by checking the map file and calculating the right
    # addresses.
    #
-   def collectSymbolAddressesOfModule(self, module = None):
+   def collectSymbolAddressesOfPackage(self, package = None):
       
-      if module == None:
-         for module in self.modules.values():
-            self.collectSymbolAddressesOfModule(module)
+      if package == None:
+         for package in self.packages.values():
+            self.collectSymbolAddressesOfPackage(package)
          return
       
-      for sub_module in module.modules.values():
-         self.collectSymbolAddressesOfModule(sub_module)
+      for sub_package in package.packages.values():
+         self.collectSymbolAddressesOfPackage(sub_package)
          
-      if module.callable:
-         self.collectSymbolAddressesOfCallable(module.callable)
+      if package.callable:
+         self.collectSymbolAddressesOfCallable(package.callable)
             
-      for input in module.inputs.values():
+      for input in package.inputs.values():
          self.collectSymbolAddressesOfData(input.data)
          self.collectSymbolAddressesOfCallable(input.callable, input = input)
          
-      for procedure in module.procedures.values():
+      for procedure in package.procedures.values():
          self.collectSymbolAddressesOfCallable(procedure.callable)
      
    def collectSymbolAddressesOfData(self, data):
@@ -791,7 +782,7 @@ class SymbolExtractor(object):
             # Function addresses must be divided by two (two byte words)
             callable.address \
                = int(self.unmangled_symbol_to_address[callable.symbol_unmangled], 16)/2
-         elif callable.symbol_unmangled == "kaleidoscope::module::_______noUpdate_______()":
+         elif callable.symbol_unmangled == "kaleidoscope::remote_call::_______noUpdate_______()":
             callable = None
          else:
             callable.address = "unexported"
@@ -802,39 +793,36 @@ class SymbolExtractor(object):
          callable = input.getParentCallable()
          callable.inherited = True
          
+   def resolveProcedureIODatum(self, datum):
+      datum.data.address = self.args_start + datum.data.offset - ram_memory_offset
+      datum.data.base_address = self.args_start - ram_memory_offset
+      datum.data.symbol_unmangled = self.args_symbol_unmangled
+         
    def resolveProcedureArgsAbsAddressProc(self, procedure):
       
       for arg in procedure.arguments.values():
-         arg.data.address = self.args_start + arg.data.offset - ram_memory_offset
-         arg.data.base_address = self.args_start - ram_memory_offset
-         arg.data.symbol_unmangled = self.args_symbol_unmangled
+         self.resolveProcedureIODatum(arg)
+         
+      for result in procedure.results.values():
+         self.resolveProcedureIODatum(result)
       
-   def resolveProcedureArgsAbsAddress(self, module = None):
+   def resolveProcedureArgsAbsAddress(self, package = None):
       
-      if module == None:
+      if package == None:
 
-         self.args_symbol_unmangled = 'kaleidoscope::module::_______procedure_args_union_______'
+         self.args_symbol_unmangled = 'kaleidoscope::remote_call::_______procedure_io_union_______'
          
          if not self.args_symbol_unmangled in self.unmangled_symbol_to_address.keys():
             logging.error("Unable to find address of symbol \'" + self.args_symbol_unmangled + '\'')
          
          self.args_start = int(self.unmangled_symbol_to_address[self.args_symbol_unmangled], 16)
          
-         for module in self.modules.values():
-            self.resolveProcedureArgsAbsAddress(module)
+         for package in self.packages.values():
+            self.resolveProcedureArgsAbsAddress(package)
          return
       
-      for procedure in module.procedures.values():
+      for procedure in package.procedures.values():
          self.resolveProcedureArgsAbsAddressProc(procedure)
-      
-   #def listModules(self, target):
-      
-      #if len(self.modules) > 0:
-         #target.write("modules:\n")
-         #for module in self.modules.values():
-            #module.write(target)
-      #else:
-         #target.write("no modules\n")
          
    def computeFileHash64(self, filename):
       
@@ -849,7 +837,12 @@ class SymbolExtractor(object):
    
    def replaceElfFileChecksum(self):
       
-      data = self.getValueFromSectionAux('.progmem.data._ZN12kaleidoscope6module17firmware_checksumE')
+      data = self.getValueFromSectionAux('.progmem.data._ZN12kaleidoscope6remote_call17firmware_checksumE')
+      
+      if data == None:
+         print "Firmware checksum not supported"
+         self.checksum_bytearray = None
+         return
       
       checksum = 0
       for datum in data:
@@ -870,7 +863,7 @@ class SymbolExtractor(object):
          
       print "Setting checksum " + str(hex(checksum))
       
-      cmd = [self.objcopy_executable, "--update-section", ".progmem.data._ZN12kaleidoscope6module17firmware_checksumE=" + checksum_file, self.sketch_object]
+      cmd = [self.objcopy_executable, "--update-section", ".progmem.data._ZN12kaleidoscope6remote_call17firmware_checksumE=" + checksum_file, self.sketch_object]
       
       proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -878,16 +871,45 @@ class SymbolExtractor(object):
          
    def writeYaml(self, target):
       
-      target.write("checksum: ")
+      if self.checksum_bytearray != None:
+         target.write("checksum: ")
+         
+         for byte in self.checksum_bytearray:
+            target.write(str(hex(byte)) + " ")
+         target.write("\n")
       
-      for byte in self.checksum_bytearray:
-         target.write(str(hex(byte)) + " ")
-      target.write("\n")
+      target.write("packages:\n")
+      if len(self.packages) > 0:
+         for package in self.packages.values():
+            package.writeYaml(target, indent_level)
+            
+   # Read package and symbol information from the sketch object and the map 
+   # file.
+   #
+   def run(self):
       
-      target.write("modules:\n")
-      if len(self.modules) > 0:
-         for module in self.modules.values():
-            module.writeYaml(target, indent_level)
+      cmd = [self.objdump_executable, '-x', self.sketch_object]
+      proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+      o, e = proc.communicate()
+      
+      objdump_output = o.decode('utf8')
+      
+      self.readPackages(objdump_output)
+      self.readRelocationInfo(objdump_output)
+      self.extractPackageInfo(objdump_output)
+      self.parseMapFile()
+      self.collectSymbolAddressesOfPackage()
+      self.resolveProcedureArgsAbsAddress()
+      
+      self.replaceElfFileChecksum()
+      #self.listPackages(sys.stdout)
+      
+      if self.yaml_output_file:
+         with open(self.yaml_output_file, 'w') as yaml_file:
+            self.writeYaml(yaml_file)
+      else:
+         self.writeYaml(sys.stdout)
          
 if __name__ == "__main__":
    SymbolExtractor().run()
