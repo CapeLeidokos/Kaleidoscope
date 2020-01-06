@@ -54,11 +54,11 @@ def dump_object(obj, target = sys.stdout, indent = ""):
    for (key, value) in obj.__dict__.items():
       target.write(indent + key + ": " + str(value) + "\n")
 
-class ProcedureIODatum(object):
+class FunctionIODatum(object):
    
-   def __init__(self, procedure, name):
+   def __init__(self, function, name):
       self.name = name
-      self.callable = procedure
+      self.callable = function
       self.description = None
       self.data = DataEntity()
       
@@ -68,7 +68,7 @@ class ProcedureIODatum(object):
       target.write(indent + "  data:\n")
       self.data.writeYaml(target, indent + indent_level)
 
-class Procedure(object):
+class Function(object):
    
    def __init__(self, package, name):
       self.package = package
@@ -80,14 +80,14 @@ class Procedure(object):
    def getArgument(self, name):
       
       if not name in self.arguments.keys():
-         self.arguments[name] = ProcedureIODatum(self, name)
+         self.arguments[name] = FunctionIODatum(self, name)
          
       return self.arguments[name]
       
    def getResult(self, name):
       
       if not name in self.results.keys():
-         self.results[name] = ProcedureIODatum(self, name)
+         self.results[name] = FunctionIODatum(self, name)
          
       return self.results[name]
       
@@ -182,7 +182,7 @@ class Package(object):
    def __init__(self, name):
       self.name = name
       self.inputs = {}
-      self.procedures = {}
+      self.functions = {}
       self.packages = {}
       self.description = ""
       self.callable = None
@@ -203,10 +203,10 @@ class Package(object):
          for input in self.inputs.values():
             input.writeYaml(target, indent + indent_level)
             
-      if len(self.procedures) > 0:
-         target.write(indent + "  procedures:\n")
-         for procedure in self.procedures.values():
-            procedure.writeYaml(target, indent + indent_level)
+      if len(self.functions) > 0:
+         target.write(indent + "  functions:\n")
+         for function in self.functions.values():
+            function.writeYaml(target, indent + indent_level)
             
       if len(self.packages) > 0:
          target.write(indent + "  packages:\n")
@@ -229,7 +229,7 @@ class Symbol(object):
       for package_name in extractor.package_names:
          
          input_name_regex = 'kaleidoscope::remote_call::' + package_name \
-            + '::(_______package_______|_______inputs_______|_______procedure_______|_______info_______)' \
+            + '::(_______package_______|_______inputs_______|_______function_______|_______info_______)' \
             + '(::([\w:]+))?'
 
          input_info_match = re.match(input_name_regex, self.name_unmangled)
@@ -269,7 +269,7 @@ class Symbol(object):
                     or (self.info_type == "address")):
                logging.error("Strange package input datum \'" + self.info_type + "\'")
                
-         elif sub_type == "_______procedure_______":
+         elif sub_type == "_______function_______":
          
             self.symbol_type = SYMBOL_TYPE_PROCEDURE
                
@@ -294,7 +294,7 @@ class Symbol(object):
                   self.bio_name = data_match.group(3)
                   self.info_type = data_match.group(4)
                else:
-                  logging.error("Strange procedure args data \'" + rest + "\'") 
+                  logging.error("Strange function args data \'" + rest + "\'") 
          else:
             # Do not report an error to enable nested packages
             pass
@@ -476,15 +476,15 @@ class SymbolExtractor(object):
          
       return package.inputs[input_name]
    
-   def getPackageProcedure(self, package_name, procedure_name):
+   def getPackageFunction(self, package_name, function_name):
          
       package = self.getPackage(package_name)
       
-      if not procedure_name in package.procedures.keys():
-         package.procedures[procedure_name] = Procedure(package, procedure_name)
-         package.procedures[procedure_name].package = package
+      if not function_name in package.functions.keys():
+         package.functions[function_name] = Function(package, function_name)
+         package.functions[function_name].package = package
          
-      return package.procedures[procedure_name]
+      return package.functions[function_name]
    
    def readRelocationLine(self, line, symbol):
       
@@ -499,11 +499,11 @@ class SymbolExtractor(object):
       elif symbol.symbol_type == SYMBOL_TYPE_MODULE:
          target = self.getPackage(symbol.package_name)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE:
-         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
+         target = self.getPackageFunction(symbol.package_name, symbol.proc_name)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
-         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name).getArgument(symbol.proc_arg)
+         target = self.getPackageFunction(symbol.package_name, symbol.proc_name).getArgument(symbol.proc_arg)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT:
-         target = self.getPackageProcedure(symbol.package_name, symbol.proc_name).getResult(symbol.proc_arg)
+         target = self.getPackageFunction(symbol.package_name, symbol.proc_name).getResult(symbol.proc_arg)
       else:
          logging.error("Strange symbol type " + str(symbol.symbol_type))
          dump_object(symbol, sys.stdout, indent_level)
@@ -534,7 +534,7 @@ class SymbolExtractor(object):
       # Whenever the addresses of any global symbol has been assigned to a global variable
       # the linker must resolve this address at program startup and compute the correct value.
       #
-      # Here we exploit this feature to determine the correct symbol that is used as update procedure
+      # Here we exploit this feature to determine the correct symbol that is used as update function
       # and to get the relative symbol offset or address of object input variables or global
       # variables.
       
@@ -651,7 +651,7 @@ class SymbolExtractor(object):
                
          elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE:
             
-            target = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
+            target = self.getPackageFunction(symbol.package_name, symbol.proc_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -660,12 +660,12 @@ class SymbolExtractor(object):
                # Parsed from relocation data
                pass
             else:
-               logging.error("Strange package procedure info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package function info type \'" + symbol.info_type + "\'")
                
          elif (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG) \
             or (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT):
             
-            proc = self.getPackageProcedure(symbol.package_name, symbol.proc_name)
+            proc = self.getPackageFunction(symbol.package_name, symbol.proc_name)
             
             if symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
                target = proc.getArgument(symbol.bio_name)
@@ -685,7 +685,7 @@ class SymbolExtractor(object):
                data = self.getValueFromSection(symbol.name_mangled)
                target.data.type = type_ids[data[0]]
             else:
-               logging.error("Strange package procedure argument info type \'" + symbol.info_type + "\'")
+               logging.error("Strange package function argument info type \'" + symbol.info_type + "\'")
                
          else:
             logging.error("Strange symbol type \'" + str(symbol.symbol_type) + "\'")
@@ -738,7 +738,7 @@ class SymbolExtractor(object):
          parse_next_line = True
          
    # After the map file has been read, the absolute addresses of
-   # package inputs and update procedures need to be resolved.
+   # package inputs and update functions need to be resolved.
    # This is done by checking the map file and calculating the right
    # addresses.
    #
@@ -759,8 +759,8 @@ class SymbolExtractor(object):
          self.collectSymbolAddressesOfData(input.data)
          self.collectSymbolAddressesOfCallable(input.callable, input = input)
          
-      for procedure in package.procedures.values():
-         self.collectSymbolAddressesOfCallable(procedure.callable)
+      for function in package.functions.values():
+         self.collectSymbolAddressesOfCallable(function.callable)
      
    def collectSymbolAddressesOfData(self, data):
       
@@ -793,24 +793,24 @@ class SymbolExtractor(object):
          callable = input.getParentCallable()
          callable.inherited = True
          
-   def resolveProcedureIODatum(self, datum):
+   def resolveFunctionIODatum(self, datum):
       datum.data.address = self.args_start + datum.data.offset - ram_memory_offset
       datum.data.base_address = self.args_start - ram_memory_offset
       datum.data.symbol_unmangled = self.args_symbol_unmangled
          
-   def resolveProcedureArgsAbsAddressProc(self, procedure):
+   def resolveFunctionArgsAbsAddressProc(self, function):
       
-      for arg in procedure.arguments.values():
-         self.resolveProcedureIODatum(arg)
+      for arg in function.arguments.values():
+         self.resolveFunctionIODatum(arg)
          
-      for result in procedure.results.values():
-         self.resolveProcedureIODatum(result)
+      for result in function.results.values():
+         self.resolveFunctionIODatum(result)
       
-   def resolveProcedureArgsAbsAddress(self, package = None):
+   def resolveFunctionArgsAbsAddress(self, package = None):
       
       if package == None:
 
-         self.args_symbol_unmangled = 'kaleidoscope::remote_call::_______procedure_io_union_______'
+         self.args_symbol_unmangled = 'kaleidoscope::remote_call::_______function_io_union_______'
          
          if not self.args_symbol_unmangled in self.unmangled_symbol_to_address.keys():
             logging.error("Unable to find address of symbol \'" + self.args_symbol_unmangled + '\'')
@@ -818,11 +818,11 @@ class SymbolExtractor(object):
          self.args_start = int(self.unmangled_symbol_to_address[self.args_symbol_unmangled], 16)
          
          for package in self.packages.values():
-            self.resolveProcedureArgsAbsAddress(package)
+            self.resolveFunctionArgsAbsAddress(package)
          return
       
-      for procedure in package.procedures.values():
-         self.resolveProcedureArgsAbsAddressProc(procedure)
+      for function in package.functions.values():
+         self.resolveFunctionArgsAbsAddressProc(function)
          
    def computeFileHash64(self, filename):
       
@@ -900,7 +900,7 @@ class SymbolExtractor(object):
       self.extractPackageInfo(objdump_output)
       self.parseMapFile()
       self.collectSymbolAddressesOfPackage()
-      self.resolveProcedureArgsAbsAddress()
+      self.resolveFunctionArgsAbsAddress()
       
       self.replaceElfFileChecksum()
       #self.listPackages(sys.stdout)

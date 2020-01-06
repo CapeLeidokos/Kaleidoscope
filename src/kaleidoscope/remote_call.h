@@ -3,7 +3,7 @@
 namespace kaleidoscope {
 namespace remote_call {
    void exportSymbols();
-   extern void *_______procedure_io_______;
+   extern void *_______function_io_______;
 } /* namespace remote_call */
 } /* namespace kaleidoscope */
 
@@ -103,16 +103,16 @@ union CallableArgsUnion<-1>
 #define KRC_INSTANCIATE_PROCEDURE_ARGUMENTS \
    namespace kaleidoscope { \
    namespace remote_call { \
-      CallableArgsUnion<__COUNTER__> _______procedure_io_union_______; \
-      KRC_EXPORT_VARIABLE(::kaleidoscope::remote_call::_______procedure_io_union_______) \
-      void *_______procedure_io_______ = &_______procedure_io_union_______; \
+      CallableArgsUnion<__COUNTER__> _______function_io_union_______; \
+      KRC_EXPORT_VARIABLE(::kaleidoscope::remote_call::_______function_io_union_______) \
+      void *_______function_io_______ = &_______function_io_union_______; \
    } /* namespace remote_call */ \
    } /* namespace kaleidoscope */
    
 #define KRC_ACCESS_ARGS(STRUCT) \
-   static_cast<const STRUCT *>(::kaleidoscope::remote_call::_______procedure_io_______)
+   static_cast<const STRUCT *>(::kaleidoscope::remote_call::_______function_io_______)
 #define KRC_ACCESS_RESULTS(STRUCT) \
-   static_cast<STRUCT *>(::kaleidoscope::remote_call::_______procedure_io_______)
+   static_cast<STRUCT *>(::kaleidoscope::remote_call::_______function_io_______)
    
 //******************************************************************************
 // Enforced symbol export
@@ -333,7 +333,7 @@ struct SymbolExporter<-1>
    } /* namespace _______results_______ */ \
    
 #define KRC_PROCEDURE(NAME, PROC, ARGS_TYPE, ...) \
-   namespace _______procedure_______ { \
+   namespace _______function_______ { \
    namespace NAME { \
       namespace _______info_______ { \
          extern const kaleidoscope::remote_call::Callable callable; \
@@ -343,7 +343,7 @@ struct SymbolExporter<-1>
       \
       __VA_ARGS__ \
    } /* namepspace NAME */ \
-   } /* namespace _______procedure_______ */
+   } /* namespace _______function_______ */
    
 #define KALEIDOSCOPE_REMOTE_CALL_END \
    KRC_FINISH_EXPORTS \
