@@ -1,4 +1,6 @@
-#pragma once 
+#pragma once
+
+#include "kaleidoscope/macro_helpers.h"
    
 namespace kaleidoscope {
 namespace remote_call {
@@ -36,13 +38,13 @@ template<typename _T>
 struct TypeNameTrait
 {};
 
-#define KRC_MEMBER_TYPE_TRAIT(TYPE, TYPE_ID) \
-   template<> \
-   struct TypeNameTrait<TYPE> \
-   { \
-      constexpr static uint8_t typeName() { \
-         return TYPE_ID; \
-      } \
+#define KRC_MEMBER_TYPE_TRAIT(TYPE, TYPE_ID)                                   \
+   template<>                                                           __NL__ \
+   struct TypeNameTrait<TYPE>                                           __NL__ \
+   {                                                                    __NL__ \
+      constexpr static uint8_t typeName() {                             __NL__ \
+         return TYPE_ID;                                                __NL__ \
+      }                                                                 __NL__ \
    };
    
 KRC_MEMBER_TYPE_TRAIT(uint8_t,     0)
@@ -56,63 +58,98 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 } // namespace remote_call
 } // namespace kaleidoscope
 
-namespace kaleidoscope {
-namespace remote_call {
+//******************************************************************************
+// IO struct export
+//******************************************************************************
+// All remote call functions arguments and result values are stored in RAM.
+// As Kaleidoscope is a single tasking system, we can allow all functions
+// to store their arguments and result values in the same memory area.
+//
+// The following macros serve to define a global union that stores 
+// arguments and result values of all functions.
+//
+// This is achieved by using recursively defined template unions on 
+// every namespace level of packages and functions.
+
+// Initializes IODataUnion collection on the level of every namespace.
+//
+#define _KRC_INIT_IO_DATA_EXPORT                                               \
+   template<int _T>                                                     __NL__ \
+   union IODataUnion                                                    __NL__ \
+   {                                                                    __NL__ \
+      IODataUnion<_T - 1> rest_;                                        __NL__ \
+   };                                                                   __NL__ \
+                                                                        __NL__ \
+   template<>                                                           __NL__ \
+   union IODataUnion<__COUNTER__>                                       __NL__ \
+   {                                                                    __NL__ \
+      uint8_t dummy_; /* Union must have at least one member */         __NL__ \
+   };
+
+#define _KRC_IO_DATA_ADD_DATA_TYPE_AUX(DATA_TYPE, CNTR)                        \
+   template<>                                                           __NL__ \
+   union IODataUnion<CNTR>                                              __NL__ \
+   {                                                                    __NL__ \
+      DATA_TYPE data_;                                                  __NL__ \
+      IODataUnion<CNTR - 1> rest_;                                      __NL__ \
+   };
    
-template<int _T>
-union CallableArgsUnion
-{
-   CallableArgsUnion<_T - 1> rest_;
-};
-
-template<>
-union CallableArgsUnion<-1>
-{
-   uint8_t dummy_; // Union must have at least one member
-};
-
-} // namespace remote_call
-} // namespace kaleidoscope
-
-#define _KM_DECLARE_PROCEDURE_IO_STRUCT_AUX(IO_STRUCT, CNTR) \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      template<> \
-      union CallableArgsUnion<CNTR> \
-      { \
-         IO_STRUCT data_; \
-         CallableArgsUnion<CNTR - 1> rest_; \
-      }; \
-   } /* namespace remote_call */ \
+// Adds a data type to the global function arguments/results (IO data)
+// union.
+//
+#define _KRC_IO_DATA_ADD_DATA_TYPE(DATA_TYPE) \
+   _KRC_IO_DATA_ADD_DATA_TYPE_AUX(DATA_TYPE, __COUNTER__)
+   
+#define _KRC_IO_DATA_ADD_FROM_NAMESPACE_AUX(NAMESPACE, CNTR)                   \
+   template<>                                                           __NL__ \
+   union IODataUnion<CNTR>                                              __NL__ \
+   {                                                                    __NL__ \
+      NAMESPACE::IODataUnion<CNTR> nested_data_;                        __NL__ \
+      IODataUnion<CNTR - 1> rest_;                                      __NL__ \
+   };
+   
+// Adds the IO data union of a namespace to the IO data union of 
+// the surrounding namespace.
+//
+#define _KRC_IO_DATA_ADD_FROM_NAMESPACE(NAMESPACE) \
+   _KRC_IO_DATA_ADD_FROM_NAMESPACE_AUX(NAMESPACE, __COUNTER__)
+   
+// Inititializes the global IO data union
+// (in namespace kaleidoscope::remote_call).
+//
+#define _KRC_GLOBAL_INIT_IO_DATA                                               \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      _KRC_INIT_IO_DATA_EXPORT                                          __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
    
-#define _KRC_EXPORT_IO_STRUCT(IO_STRUCT) \
-   _KM_DECLARE_PROCEDURE_IO_STRUCT_AUX(IO_STRUCT, __COUNTER__)
-   
-#define KRC_EXPORT_PROCEDURE(PROC, ...) \
-   \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      _KM_EXPORT_FUNCTION_AUX(PROC, __COUNTER__) \
-   } /* namespace remote_call */ \
-   } /* namespace kaleidoscope */ \
-   \
-   /* Export arguments and results */ \
-   MAP(_KRC_EXPORT_IO_STRUCT, __VA_ARGS__)
-   
-#define KRC_INSTANCIATE_PROCEDURE_ARGUMENTS \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      CallableArgsUnion<__COUNTER__> _______function_io_union_______; \
-      KRC_EXPORT_VARIABLE(::kaleidoscope::remote_call::_______function_io_union_______) \
-      void *_______function_io_______ = &_______function_io_union_______; \
-   } /* namespace remote_call */ \
+// Exports the global IO data union.
+//
+#define _KRC_GLOBAL_FINISH_IO_DATA                                             \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      IODataUnion<__COUNTER__> _______function_io_union_______;         __NL__ \
+      KRC_EXPORT_VARIABLE(::kaleidoscope::remote_call                   __NL__ \
+         ::_______function_io_union_______)                             __NL__ \
+      void *_______function_io_______                                   __NL__ \
+            = &_______function_io_union_______;                         __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
    
-#define KRC_ACCESS_ARGS(STRUCT) \
-   static_cast<const STRUCT *>(::kaleidoscope::remote_call::_______function_io_______)
-#define KRC_ACCESS_RESULTS(STRUCT) \
-   static_cast<STRUCT *>(::kaleidoscope::remote_call::_______function_io_______)
+// Accesses function arguments (casts the global IO union to a pointer to 
+// the actual arguments struct).
+//
+#define KRC_ACCESS_ARGS()                                                      \
+   static_cast<const _______Arguments_______::StructType*>(             __NL__ \
+      ::kaleidoscope::remote_call::_______function_io_______)
+   
+// Accesses function results (casts the global IO union to a pointer to 
+// the actual results struct).
+//
+#define KRC_ACCESS_RESULTS()                                                   \
+   static_cast<const _______Results_______::StructType*>(               __NL__ \
+      ::kaleidoscope::remote_call::_______function_io_______)
    
 //******************************************************************************
 // Enforced symbol export
@@ -126,7 +163,7 @@ union CallableArgsUnion<-1>
 // This is achieved by defining SymbolExporter template class specializations
 // that do the assembler symbol access. The SymbolExporter classes are defined
 // in a way that each specialization calls the apply() method of the specialization
-// with the next lower integer template parameter. SymbolExporter<-1> ends
+// with the next lower integer template parameter. SymbolExporter<CNTR> ends
 // the recursion. 
 // 
 // Every invokation of EXPORT_FUNCTION or EXPORT_VARIABLE defines a SymbolExporter
@@ -144,214 +181,367 @@ union CallableArgsUnion<-1>
 // is invoked by void Runtime_::setup() which is in turn called indirectly
 // by main().
 
-namespace kaleidoscope {
-namespace remote_call {
-   
-template<int _T>
-struct SymbolExporter
-{
-   __attribute__((always_inline))
-   static void eval() {
-      SymbolExporter<_T - 1>::eval();
-   }
-};
-
-// End recursion
+// Initializes symbol export for a namespace level (package or function).
 //
-template<>
-struct SymbolExporter<-1>
-{
-   __attribute__((always_inline))
-   static void eval() {}
-};
-
-} // namespace remote_call
-} // namespace kaleidoscope
-
-#define _KM_EXPORT_FUNCTION_AUX(FUNC, CNTR) \
-   template<> \
-   struct SymbolExporter<CNTR> \
-   { \
-      __attribute__((always_inline)) \
-      static void eval() { \
-         asm volatile( \
-            "ldi r26, lo8(%0)" :: "p" (FUNC)); \
-         \
-         SymbolExporter<CNTR - 1>::eval(); \
-      } \
+#define _KRC_INIT_SYMBOL_EXPORT                                                \
+   template<int _T>                                                     __NL__ \
+   struct SymbolExporter                                                __NL__ \
+   {                                                                    __NL__ \
+      __attribute__((always_inline))                                    __NL__ \
+      static void eval() {                                              __NL__ \
+         SymbolExporter<_T - 1>::eval();                                __NL__ \
+      }                                                                 __NL__ \
+   };                                                                   __NL__ \
+                                                                        __NL__ \
+   /* End recursion */                                                  __NL__ \
+   /**/                                                                 __NL__ \
+   template<>                                                           __NL__ \
+   struct SymbolExporter<__COUNTER__>                                   __NL__ \
+   {                                                                    __NL__ \
+      __attribute__((always_inline))                                    __NL__ \
+      static void eval() {}                                             __NL__ \
    };
    
-#define KRC_EXPORT_FUNCTION(FUNC) _KM_EXPORT_FUNCTION_AUX(FUNC, __COUNTER__)
+#define _KRC_EXPORT_SYMBOLS_OF_NAMESPACE_AUX(NAMESPACE, CNTR)                  \
+   template<>                                                           __NL__ \
+   struct SymbolExporter<CNTR>                                          __NL__ \
+   {                                                                    __NL__ \
+      __attribute__((always_inline))                                    __NL__ \
+      static void eval() {                                              __NL__ \
+         SymbolExporter<CNTR - 1>::eval();                              __NL__ \
+         NAMESPACE::SymbolExporter<CNTR>::eval();                       __NL__ \
+      }                                                                 __NL__ \
+   };
 
-#define _KM_EXPORT_VARIABLE_AUX(VAR, CNTR) \
-   template<> \
-   struct SymbolExporter<CNTR> \
-   { \
-      __attribute__((always_inline)) \
-      static void eval() { \
-         asm volatile("" : "+r" (VAR)); \
-         \
-         SymbolExporter<CNTR - 1>::eval(); \
-      } \
+// Collects symbol export of a namespace and ensures that it will
+// be considered by the surrounding namespace.
+//
+#define _KRC_EXPORT_SYMBOLS_OF_NAMESPACE(NAMESPACE) \
+   _KRC_EXPORT_SYMBOLS_OF_NAMESPACE_AUX(NAMESPACE, __COUNTER__)
+
+#define _KRC_EXPORT_FUNCTION_AUX(FUNC, CNTR)                                   \
+   template<>                                                           __NL__ \
+   struct SymbolExporter<CNTR>                                          __NL__ \
+   {                                                                    __NL__ \
+      __attribute__((always_inline))                                    __NL__ \
+      static void eval() {                                              __NL__ \
+         asm volatile(                                                  __NL__ \
+            "ldi r26, lo8(%0)" :: "p" (FUNC));                          __NL__ \
+                                                                        __NL__ \
+         SymbolExporter<CNTR - 1>::eval();                              __NL__ \
+      }                                                                 __NL__ \
    };
    
-#define KRC_EXPORT_VARIABLE(VAR) _KM_EXPORT_VARIABLE_AUX(VAR, __COUNTER__)
+// Exports a function. By issuing an assembler load command of the 
+// function address, we prevent the function to be garbage collected.
+//
+#define KRC_EXPORT_FUNCTION(FUNC)                                              \
+   _KRC_EXPORT_FUNCTION_AUX(FUNC, __COUNTER__)
+
+#define _KRC_EXPORT_VARIABLE_AUX(VAR, CNTR)                                    \
+   template<>                                                           __NL__ \
+   struct SymbolExporter<CNTR>                                          __NL__ \
+   {                                                                    __NL__ \
+      __attribute__((always_inline))                                    __NL__ \
+      static void eval() {                                              __NL__ \
+         asm volatile("" : "+r" (VAR));                                 __NL__ \
+                                                                        __NL__ \
+         SymbolExporter<CNTR - 1>::eval();                              __NL__ \
+      }                                                                 __NL__ \
+   };
+  
+// Exports a global variable. By issuing an assembler load command of the 
+// variable address, we prevent the variable to be garbage collected.
+//
+#define KRC_EXPORT_VARIABLE(VAR)                                               \
+   _KRC_EXPORT_VARIABLE_AUX(VAR, __COUNTER__)
    
-#define KRC_FINISH_EXPORTS \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      void exportSymbols() { \
-         SymbolExporter<__COUNTER__>::eval(); \
-      } \
-   } /* namespace remote_call */ \
+// Initialize symbol export in the outermost 
+// namespace kaleidoscope::remote_call.
+//
+#define _KRC_GLOBAL_INIT_SYMBOL_EXPORT                                         \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      _KRC_INIT_SYMBOL_EXPORT                                           __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
+   } /* namespace kaleidoscope */
+   
+// Provide a function exportSymbols() that is called by the runtimes 
+// intitialization method in order to prevent symbol garbage collection.
+//
+#define _KRC_GLOBAL_FINISH_SYMBOL_EXPORTS                                      \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      void exportSymbols() {                                            __NL__ \
+         SymbolExporter<__COUNTER__>::eval();                           __NL__ \
+      }                                                                 __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
    
 //******************************************************************************
 
-#define KALEIDOSCOPE_REMOTE_CALL(...) \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      __VA_ARGS__ \
-   } /* namespace remote_call */ \
+// At the begin of a namespace (package or function) we initialize symbol export
+// and IO data union collection.
+//
+#define _KRC_START_NAMESPACE(NAMESPACE)                                        \
+   namespace NAMESPACE {                                                __NL__ \
+      _KRC_INIT_SYMBOL_EXPORT                                           __NL__ \
+      _KRC_INIT_IO_DATA_EXPORT
+   
+// At the end of every namespace we make the surrounding namespace collect
+// the symbol export and IO data union information of the nested namespace.
+//
+#define _KRC_END_NAMESPACE(NAMESPACE)                                          \
+   } /* namespace NAMESPACE */                                          __NL__ \
+   _KRC_EXPORT_SYMBOLS_OF_NAMESPACE(NAMESPACE)                          __NL__ \
+   _KRC_IO_DATA_ADD_FROM_NAMESPACE(NAMESPACE)
+   
+// For all namespaces that are opened and closes several times, such
+// as e.g. _______inputs_______, we need to initialize the 
+// export stuff only once.
+//
+#define _KRC_INIT_EXPORT_STUFF_FOR_NAMESPACE(NAMESPACE)                        \
+   namespace NAMESPACE {                                                __NL__ \
+      _KRC_INIT_SYMBOL_EXPORT                                           __NL__ \
+      _KRC_INIT_IO_DATA_EXPORT                                          __NL__ \
+   }
+   
+#define _KRC_FINALIZE_EXPORT_STUFF_FOR_NAMESPACE(NAMESPACE)                    \
+   _KRC_EXPORT_SYMBOLS_OF_NAMESPACE(NAMESPACE)                                 \
+   _KRC_IO_DATA_ADD_FROM_NAMESPACE(NAMESPACE)
+   
+// Adds a description to a package, function, argument, result or input.
+//
+#define KRC_DESCRIPTION(S)                                                     \
+   namespace _______info_______ {                                       __NL__ \
+      extern const char description[];                                  __NL__ \
+      const char description[] = S;                                     __NL__ \
+   } /* namespace _______info_______ */
+
+// Associates an update function with an input.
+//
+#define KRC_UPDATE(FUNC)                                                       \
+   namespace _______info_______ {                                       __NL__ \
+      extern const kaleidoscope::remote_call::Callable callable;        __NL__ \
+      const kaleidoscope::remote_call::Callable callable                __NL__ \
+         = FUNC;                                                        __NL__ \
+   } /* namespace _______info_______ */
+   
+// Use a global function as update for an input.
+//
+#define KRC_UPDATE_THROUGH_GLOBAL_FUNCTION(FUNC)                               \
+   KRC_EXPORT_FUNCTION(FUNC)                                                   \
+   KRC_UPDATE(&FUNC)
+  
+// Use a static class member function as update for an input.
+//
+#define KRC_UPDATE_THROUGH_STATIC_MEMBER_FUNCTION(NAME)                        \
+   KRC_EXPORT_FUNCTION(ClassType::NAME)                                        \
+   KRC_UPDATE(&ClassType::NAME)
+
+// Defines an input.
+//
+#define KRC_INPUT(NAME, VARIABLE_NAME, ...)                                    \
+   /* Export stuff for namepspace _______inputs_______ has already been */     \
+   /* initialized in KRC_PACKAGE(...)                                   */     \
+   /**/                                                                        \
+   namespace _______inputs_______ {                                     __NL__ \
+   _KRC_START_NAMESPACE(NAME) {                                         __NL__ \
+                                                                        __NL__ \
+      namespace _______info_______ {                                    __NL__ \
+         extern const void* address;                                    __NL__ \
+         const void* address = &object->VARIABLE_NAME;                  __NL__ \
+                                                                        __NL__ \
+         extern const uint16_t size;                                    __NL__ \
+         const uint16_t size = sizeof(object->VARIABLE_NAME);           __NL__ \
+                                                                        __NL__ \
+         extern const uint8_t type;                                     __NL__ \
+         const uint8_t type                                             __NL__ \
+            = TypeNameTrait<decltype(object->VARIABLE_NAME)>            __NL__ \
+                  ::typeName();                                         __NL__ \
+      } /* namespace _______info_______ */                              __NL__ \
+                                                                        __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+   _KRC_END_NAMESPACE(NAME)                                             __NL__ \
+   } /* namespace _______inputs_______ */
+   
+// Defines a package level (packages may be hierarchically structured).
+//
+#define KRC_PACKAGE(PACKAGE_NAME, ...)                                         \
+   _KRC_START_NAMESPACE(PACKAGE_NAME)                                   __NL__ \
+                                                                        __NL__ \
+      _KRC_INIT_EXPORT_STUFF_FOR_NAMESPACE(_______inputs_______)        __NL__ \
+      _KRC_INIT_EXPORT_STUFF_FOR_NAMESPACE(_______function_______)      __NL__ \
+                                                                        __NL__ \
+      /* The tag variable is only required to simplify regex */         __NL__ \
+      /* parsing of packages                                 */         __NL__ \
+      /**/                                                              __NL__ \
+      extern const uint8_t _______package_______;                       __NL__ \
+      const uint8_t _______package_______ = 0;                          __NL__ \
+                                                                        __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+                                                                        __NL__ \
+      _KRC_FINALIZE_EXPORT_STUFF_FOR_NAMESPACE(_______inputs_______)    __NL__ \
+      _KRC_FINALIZE_EXPORT_STUFF_FOR_NAMESPACE(_______function_______)  __NL__ \
+                                                                        __NL__ \
+   _KRC_END_NAMESPACE(PACKAGE_NAME)
+   
+// The outermost package level must be defined in namespace 
+// kaleidoscope::remote_call. Therefore, we supply a dedicated macro to
+// define the outermost package level.
+//
+#define KRC_PACKAGE_ROOT(PACKAGE_NAME, ...)                                    \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      KRC_PACKAGE(PACKAGE_NAME, __VA_ARGS__)                            __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
 
-#define KRC_DESCRIPTION(S) \
-   namespace _______info_______ { \
-      extern const char description[]; \
-      const char description[] = S; \
-   } /* namespace _______info_______ */
+// Defines a package that is associatd with a global class object.
+//
+#define KRC_OBJECT(PACKAGE_NAME, OBJECT, ...)                                  \
+   _KRC_START_NAMESPACE(PACKAGE_NAME)                                   __NL__ \
+                                                                        __NL__ \
+      /* The tag variable is only required to simplify regex */         __NL__ \
+      /* parsing of packages                                 */         __NL__ \
+      /**/                                                              __NL__ \
+      extern const uint8_t _______package_______;                       __NL__ \
+      const uint8_t _______package_______ = 0;                          __NL__ \
+                                                                        __NL__ \
+      typedef decltype(OBJECT) ClassType;                               __NL__ \
+                                                                        __NL__ \
+      constexpr auto* object = &OBJECT;                                 __NL__ \
+                                                                        __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+   _KRC_END_NAMESPACE(PACKAGE_NAME)
    
-#define KRC_UPDATE(PROC) \
-   namespace _______info_______ { \
-      extern const kaleidoscope::remote_call::Callable callable; \
-      const kaleidoscope::remote_call::Callable callable \
-         = PROC; \
-   } /* namespace _______info_______ */
-
-#define KRC_INPUT(ENTRY_NAME, VARIABLE_NAME, ...)  \
-      namespace _______inputs_______ { \
-      namespace ENTRY_NAME { \
-         \
-         namespace _______info_______ { \
-            extern const void* address; \
-            const void* address = &object->VARIABLE_NAME; \
-            \
-            extern const uint16_t size; \
-            const uint16_t size = sizeof(object->VARIABLE_NAME); \
-            \
-            extern const uint8_t type; \
-            const uint8_t type \
-               = TypeNameTrait<decltype(object->VARIABLE_NAME)>::typeName(); \
-         } /* namespace _______info_______ */ \
-         \
-         __VA_ARGS__ \
-      } /* namespace ENTRY_NAME */ \
-      } /* namespace _______inputs_______ */
-   
-#define KRC_OBJECT(PACKAGE_NAME, OBJECT, ...) \
-   namespace PACKAGE_NAME {\
-      \
-      /* The tag variable is only required to simplify regex \
-       * parsing of packages \
-       */ \
-      extern const uint8_t _______package_______; \
-      const uint8_t _______package_______ = 0; \
-      \
-      typedef decltype(OBJECT) ClassType; \
-      \
-      constexpr auto* object = &OBJECT; \
-      \
-      __VA_ARGS__ \
-   } /* namespace PACKAGE_NAME */
-   
+// Defines a package that is associatd with a global class object that is
+// a Kaleidoscope plugin.
+//
 #define KRC_PLUGIN(...) \
    KRC_OBJECT(__VA_ARGS__)
    
-#define KRC_GLOBAL(MEMBER_NAME, VARIABLE, ...)  \
-      namespace _______inputs_______ { \
-      namespace MEMBER_NAME { \
-         \
-         namespace _______info_______ { \
-            extern const void* address; \
-            const void* address = &VARIABLE; \
-            \
-            extern const uint16_t size; \
-            const uint16_t size = sizeof(VARIABLE); \
-            \
-            extern const uint8_t type; \
-            const uint8_t type \
-               = TypeNameTrait<decltype(VARIABLE)>::typeName(); \
-         } /* namespace _______info_______ */ \
-         \
-         __VA_ARGS__ \
-      } /* namespace MEMBER_NAME */ \
-      } /* namespace _______inputs_______ */
-
-#define KRC_PACKAGE(PACKAGE_NAME, ...) \
-   namespace PACKAGE_NAME { \
-      \
-      /* The tag variable is only required to simplify regex \
-       * parsing of packages \
-       */ \
-      extern const uint8_t _______package_______; \
-      const uint8_t _______package_______ = 0; \
-      \
-      __VA_ARGS__ \
-   } /* namespace PACKAGE_NAME */
-   
-#define _KRC_PROCESS_DATUM_AUX(NAME, ARGS_MEMBER_NAME, ...)  \
-   namespace NAME { \
-      namespace _______info_______ { \
-         extern const uint16_t offset; \
-         const uint16_t offset = (uint16_t)offsetof(StructType, ARGS_MEMBER_NAME); \
-         \
-         extern const uint16_t size; \
-         const uint16_t size = sizeof(decltype(StructType{}.ARGS_MEMBER_NAME)); \
-         \
-         extern const uint8_t type; \
-         const uint8_t type \
-            = TypeNameTrait<decltype(StructType{}.ARGS_MEMBER_NAME)>::typeName(); \
-      } /* namespace _______info_______ */ \
-         \
-      __VA_ARGS__ \
+// Associates a global variable with an input.
+//
+#define KRC_GLOBAL(MEMBER_NAME, VARIABLE, ...)                                 \
+   _KRC_START_NAMESPACE(_______inputs_______)                           __NL__ \
+   _KRC_START_NAMESPACE(MEMBER_NAME)                                    __NL__ \
+                                                                        __NL__ \
+      KRC_EXPORT_VARIABLE(VARIABLE)                                     __NL__ \
+                                                                        __NL__ \
+      namespace _______info_______ {                                    __NL__ \
+         extern const void* address;                                    __NL__ \
+         const void* address = &VARIABLE;                               __NL__ \
+                                                                        __NL__ \
+         extern const uint16_t size;                                    __NL__ \
+         const uint16_t size = sizeof(VARIABLE);                        __NL__ \
+                                                                        __NL__ \
+         extern const uint8_t type;                                     __NL__ \
+         const uint8_t type                                             __NL__ \
+            = TypeNameTrait<decltype(VARIABLE)>::typeName();            __NL__ \
+      } /* namespace _______info_______ */                              __NL__ \
+                                                                        __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+   _KRC_END_NAMESPACE(MEMBER_NAME)                                      __NL__ \
+   _KRC_END_NAMESPACE(_______inputs_______)
+      
+// An auxiliary macro that is used both to define function arguments and
+// results.
+//
+#define _KRC_IO_DATUM_AUX(TYPE, NAME, ...)                                     \
+   namespace NAME {                                                     __NL__ \
+      namespace _______info_______ {                                    __NL__ \
+         extern const uint16_t offset;                                  __NL__ \
+         const uint16_t offset                                          __NL__ \
+            = (uint16_t)offsetof(StructType, NAME);                     __NL__ \
+                                                                        __NL__ \
+         extern const uint16_t size;                                    __NL__ \
+         const uint16_t size                                            __NL__ \
+            = sizeof(decltype(StructType{}.NAME));                      __NL__ \
+                                                                        __NL__ \
+         extern const uint8_t type;                                     __NL__ \
+         const uint8_t type                                             __NL__ \
+            = TypeNameTrait<decltype(StructType{}.NAME)>                __NL__ \
+                  ::typeName();                                         __NL__ \
+      } /* namespace _______info_______ */                              __NL__ \
+                                                                        __NL__ \
+      __VA_ARGS__                                                       __NL__ \
    } /* namespace NAME */
    
-#define _KRC_PROCESS_DATUM(...) _KRC_PROCESS_DATUM_AUX __VA_ARGS__
+#define _KRC_IO_DATUM(...) _KRC_IO_DATUM_AUX __VA_ARGS__
+
+#define _KRC_IO_DATA_STRUCT_MEMBER_AUX(TYPE, NAME, ...)                        \
+   TYPE NAME;
    
-#define KRC_ARGUMENTS(ARGS_TYPE, ...) \
-   \
-   namespace _______arguments_______ { \
-      typedef ARGS_TYPE StructType; \
-      MAP(_KRC_PROCESS_DATUM, __VA_ARGS__) \
-   } /* namespace _______arguments_______ */ \
+// Defines the member of an IO data struct (function argument or result).
+//
+#define _KRC_IO_DATA_STRUCT_MEMBER(...)                                        \
+   _KRC_IO_DATA_STRUCT_MEMBER_AUX __VA_ARGS__
    
-#define KRC_RESULTS(RESULT_TYPE, ...) \
-   \
-   namespace _______results_______ { \
-      typedef RESULT_TYPE StructType; \
-      MAP(_KRC_PROCESS_DATUM, __VA_ARGS__) \
-   } /* namespace _______results_______ */ \
+// Defines a function argument.
+//
+#define KRC_ARGUMENTS(...)                                                     \
+   _KRC_START_NAMESPACE(_______arguments_______)                        __NL__ \
+                                                                        __NL__ \
+      struct StructType {                                               __NL__ \
+         MAP(_KRC_IO_DATA_STRUCT_MEMBER, __VA_ARGS__)                   __NL__ \
+      };                                                                __NL__ \
+                                                                        __NL__ \
+      MAP(_KRC_IO_DATUM, __VA_ARGS__)                                   __NL__ \
+                                                                        __NL__ \
+      _KRC_IO_DATA_ADD_DATA_TYPE(StructType)                            __NL__ \
+                                                                        __NL__ \
+   _KRC_END_NAMESPACE(_______arguments_______)
    
-#define KRC_PROCEDURE(NAME, PROC, ARGS_TYPE, ...) \
-   namespace _______function_______ { \
-   namespace NAME { \
-      namespace _______info_______ { \
-         extern const kaleidoscope::remote_call::Callable callable; \
-         const kaleidoscope::remote_call::Callable callable \
-            = PROC; \
-      } /* namespace _______info_______ */ \
-      \
-      __VA_ARGS__ \
-   } /* namepspace NAME */ \
+// Defines a function result.
+//
+#define KRC_RESULTS(...)                                                       \
+   _KRC_START_NAMESPACE(_______results_______)                          __NL__ \
+                                                                        __NL__ \
+      struct StructType {                                               __NL__ \
+         MAP(_KRC_IO_DATA_STRUCT_MEMBER, __VA_ARGS__)                   __NL__ \
+      };                                                                __NL__ \
+                                                                        __NL__ \
+      MAP(_KRC_IO_DATUM, __VA_ARGS__)                                   __NL__ \
+                                                                        __NL__ \
+      _KRC_IO_DATA_ADD_DATA_TYPE(StructType)                            __NL__ \
+                                                                        __NL__ \
+   _KRC_END_NAMESPACE(_______results_______)
+   
+// Defines the body of a remote call function, exports the function
+// and registers it with the remote call system.
+//
+#define KRC_FUNCTION_BODY(...)                                                 \
+   void functionBody() {                                                __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+   }                                                                    __NL__ \
+                                                                        __NL__ \
+   KRC_EXPORT_FUNCTION(functionBody)                                    __NL__ \
+                                                                        __NL__ \
+   namespace _______info_______ {                                       __NL__ \
+      extern const kaleidoscope::remote_call::Callable callable;        __NL__ \
+      const kaleidoscope::remote_call::Callable callable                __NL__ \
+         = functionBody;                                                __NL__ \
+   } /* namespace _______info_______ */
+   
+// Defines a remote call function.
+//
+#define KRC_FUNCTION(NAME, ...)                                                \
+   /* Export stuff for namepspace _______function_______ */                    \
+   /* has already been initialized in KRC_PACKAGE(...) */                      \
+   /**/                                                                        \
+   namespace _______function_______ {                                   __NL__ \
+   _KRC_START_NAMESPACE(NAME)                                           __NL__ \
+      __VA_ARGS__                                                       __NL__ \
+   _KRC_END_NAMESPACE(NAME)                                             __NL__ \
    } /* namespace _______function_______ */
    
-#define KALEIDOSCOPE_REMOTE_CALL_END \
-   KRC_FINISH_EXPORTS \
-   KRC_INSTANCIATE_PROCEDURE_ARGUMENTS
+#define KALEIDOSCOPE_REMOTE_CALL_END                                           \
+   _KRC_GLOBAL_FINISH_SYMBOL_EXPORTS                                           \
+   _KRC_GLOBAL_FINISH_IO_DATA
    
-#define KRC_STATIC_MEMBER_FUNCTION(NAME) &ClassType::NAME
-#define KRC_GLOBAL_FUNCTION(FUNCTION_NAME) &FUNCTION_NAME
-#define KRC_NO_UPDATE KRC_UPDATE(&kaleidoscope::remote_call::_______noUpdate_______)
+#define KRC_NO_UPDATE                                                          \
+   KRC_UPDATE(&kaleidoscope::remote_call::_______noUpdate_______)
 
 // A soon as we find a way to incorporate remote call package scan during
 // the build process, we can store a firmware checksum in the firmware elf file.
@@ -366,20 +556,26 @@ namespace remote_call {
 } // namespace remote_call
 } // namespace kaleidoscope
 #endif
+
+_KRC_GLOBAL_INIT_SYMBOL_EXPORT
+_KRC_GLOBAL_INIT_IO_DATA
    
 #else // #ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
 
 // If the remote call module is disabled, we need at least an empty
 // symbol export function.
 //
-#define KRC_FINISH_EXPORTS \
-   namespace kaleidoscope { \
-   namespace remote_call { \
-      void exportSymbols() {} \
-   } /* namespace remote_call */ \
+#define _KRC_GLOBAL_FINISH_SYMBOL_EXPORTS                                      \
+   namespace kaleidoscope {                                             __NL__ \
+   namespace remote_call {                                              __NL__ \
+      void exportSymbols() {}                                           __NL__ \
+   } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
 
 #endif // #ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
+
+#define KALEIDOSCOPE_REMOTE_CALL(...) __VA_ARGS__
+
 #else
 
 // An empty version of the KALEIDOSCOPE_REMOTE_CALL macro
