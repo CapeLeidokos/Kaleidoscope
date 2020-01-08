@@ -81,7 +81,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    };                                                                   __NL__ \
                                                                         __NL__ \
    template<>                                                           __NL__ \
-   union IODataUnion<__COUNTER__>                                       __NL__ \
+   union IODataUnion<-1>                                                __NL__ \
    {                                                                    __NL__ \
       uint8_t dummy_; /* Union must have at least one member */         __NL__ \
    };
@@ -141,14 +141,14 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 // the actual arguments struct).
 //
 #define KRC_ACCESS_ARGS()                                                      \
-   static_cast<const _______Arguments_______::StructType*>(             __NL__ \
+   static_cast<const _______arguments_______::StructType*>(             __NL__ \
       ::kaleidoscope::remote_call::_______function_io_______)
    
 // Accesses function results (casts the global IO union to a pointer to 
 // the actual results struct).
 //
 #define KRC_ACCESS_RESULTS()                                                   \
-   static_cast<const _______Results_______::StructType*>(               __NL__ \
+   static_cast<_______results_______::StructType*>(                     __NL__ \
       ::kaleidoscope::remote_call::_______function_io_______)
    
 //******************************************************************************
@@ -196,7 +196,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    /* End recursion */                                                  __NL__ \
    /**/                                                                 __NL__ \
    template<>                                                           __NL__ \
-   struct SymbolExporter<__COUNTER__>                                   __NL__ \
+   struct SymbolExporter<-1>                                            __NL__ \
    {                                                                    __NL__ \
       __attribute__((always_inline))                                    __NL__ \
       static void eval() {}                                             __NL__ \
@@ -341,12 +341,12 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 
 // Defines an input.
 //
-#define KRC_INPUT(NAME, VARIABLE_NAME, ...)                                    \
+#define KRC_MEMBER(NAME, VARIABLE_NAME, ...)                                    \
    /* Export stuff for namepspace _______inputs_______ has already been */     \
    /* initialized in KRC_PACKAGE(...)                                   */     \
    /**/                                                                        \
    namespace _______inputs_______ {                                     __NL__ \
-   _KRC_START_NAMESPACE(NAME) {                                         __NL__ \
+   _KRC_START_NAMESPACE(NAME)                                           __NL__ \
                                                                         __NL__ \
       namespace _______info_______ {                                    __NL__ \
          extern const void* address;                                    __NL__ \
@@ -365,10 +365,13 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    _KRC_END_NAMESPACE(NAME)                                             __NL__ \
    } /* namespace _______inputs_______ */
    
+#define _KRC_PACKAGE_NAMESPACE_NAME(NAME, CNTR)                                \
+   GLUE4(_______package, CNTR, _______, NAME)
+   
 // Defines a package level (packages may be hierarchically structured).
 //
-#define KRC_PACKAGE(PACKAGE_NAME, ...)                                         \
-   _KRC_START_NAMESPACE(PACKAGE_NAME)                                   __NL__ \
+#define _KRC_PACKAGE_AUX(NAME, CNTR, ...)                                      \
+   _KRC_START_NAMESPACE(_KRC_PACKAGE_NAMESPACE_NAME(NAME, CNTR))        __NL__ \
                                                                         __NL__ \
       _KRC_INIT_EXPORT_STUFF_FOR_NAMESPACE(_______inputs_______)        __NL__ \
       _KRC_INIT_EXPORT_STUFF_FOR_NAMESPACE(_______function_______)      __NL__ \
@@ -384,7 +387,10 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
       _KRC_FINALIZE_EXPORT_STUFF_FOR_NAMESPACE(_______inputs_______)    __NL__ \
       _KRC_FINALIZE_EXPORT_STUFF_FOR_NAMESPACE(_______function_______)  __NL__ \
                                                                         __NL__ \
-   _KRC_END_NAMESPACE(PACKAGE_NAME)
+   _KRC_END_NAMESPACE(_KRC_PACKAGE_NAMESPACE_NAME(NAME, CNTR))
+   
+#define KRC_PACKAGE(NAME, ...)                                                 \
+   _KRC_PACKAGE_AUX(NAME, __COUNTER__, __VA_ARGS__)
    
 // The outermost package level must be defined in namespace 
 // kaleidoscope::remote_call. Therefore, we supply a dedicated macro to
@@ -399,21 +405,13 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 
 // Defines a package that is associatd with a global class object.
 //
-#define KRC_OBJECT(PACKAGE_NAME, OBJECT, ...)                                  \
-   _KRC_START_NAMESPACE(PACKAGE_NAME)                                   __NL__ \
-                                                                        __NL__ \
-      /* The tag variable is only required to simplify regex */         __NL__ \
-      /* parsing of packages                                 */         __NL__ \
-      /**/                                                              __NL__ \
-      extern const uint8_t _______package_______;                       __NL__ \
-      const uint8_t _______package_______ = 0;                          __NL__ \
-                                                                        __NL__ \
+#define KRC_OBJECT(NAME, OBJECT, ...)                                          \
+   _KRC_PACKAGE_AUX(NAME, __COUNTER__,                                  __NL__ \
       typedef decltype(OBJECT) ClassType;                               __NL__ \
-                                                                        __NL__ \
       constexpr auto* object = &OBJECT;                                 __NL__ \
                                                                         __NL__ \
       __VA_ARGS__                                                       __NL__ \
-   _KRC_END_NAMESPACE(PACKAGE_NAME)
+   )
    
 // Defines a package that is associatd with a global class object that is
 // a Kaleidoscope plugin.
@@ -424,7 +422,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 // Associates a global variable with an input.
 //
 #define KRC_GLOBAL(MEMBER_NAME, VARIABLE, ...)                                 \
-   _KRC_START_NAMESPACE(_______inputs_______)                           __NL__ \
+   namespace _______inputs_______ {                                     __NL__ \
    _KRC_START_NAMESPACE(MEMBER_NAME)                                    __NL__ \
                                                                         __NL__ \
       KRC_EXPORT_VARIABLE(VARIABLE)                                     __NL__ \
@@ -443,7 +441,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
                                                                         __NL__ \
       __VA_ARGS__                                                       __NL__ \
    _KRC_END_NAMESPACE(MEMBER_NAME)                                      __NL__ \
-   _KRC_END_NAMESPACE(_______inputs_______)
+   } /* namespace _______inputs_______ */
       
 // An auxiliary macro that is used both to define function arguments and
 // results.
