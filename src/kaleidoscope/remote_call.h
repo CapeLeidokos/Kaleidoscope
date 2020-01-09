@@ -425,8 +425,6 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    namespace _______inputs_______ {                                     __NL__ \
    _KRC_START_NAMESPACE(MEMBER_NAME)                                    __NL__ \
                                                                         __NL__ \
-      KRC_EXPORT_VARIABLE(VARIABLE)                                     __NL__ \
-                                                                        __NL__ \
       namespace _______info_______ {                                    __NL__ \
          extern const void* address;                                    __NL__ \
          const void* address = &VARIABLE;                               __NL__ \
@@ -440,6 +438,9 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
       } /* namespace _______info_______ */                              __NL__ \
                                                                         __NL__ \
       __VA_ARGS__                                                       __NL__ \
+                                                                        __NL__ \
+      KRC_EXPORT_VARIABLE(VARIABLE)                                     __NL__ \
+                                                                        __NL__ \
    _KRC_END_NAMESPACE(MEMBER_NAME)                                      __NL__ \
    } /* namespace _______inputs_______ */
       
