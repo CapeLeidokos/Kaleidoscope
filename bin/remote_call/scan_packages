@@ -8,7 +8,7 @@
 
 import os
 import sys
-import re
+import regex
 import subprocess
 import logging
 import copy
@@ -32,8 +32,8 @@ SYMBOL_TYPE_NONE = 0
 SYMBOL_TYPE_MODULE = 1
 SYMBOL_TYPE_MODULE_MEMBER = 2
 SYMBOL_TYPE_PROCEDURE = 3
-SYMBOL_TYPE_PROCEDURE_ARG = 4
-SYMBOL_TYPE_PROCEDURE_RESULT = 5
+SYMBOL_TYPE_FUNCTION_ARG = 4
+SYMBOL_TYPE_FUNCTION_RESULT = 5
       
 def is_exe(fpath):
    return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
@@ -59,7 +59,7 @@ class FunctionIODatum(object):
    def __init__(self, function, name):
       self.name = name
       self.callable = function
-      self.description = None
+      self.description = ""
       self.data = DataEntity()
       
    def writeYaml(self, target, indent):
@@ -74,6 +74,7 @@ class Function(object):
       self.package = package
       self.name = name
       self.callable = None
+      self.description = ""
       self.arguments = {}
       self.results = {}
       
@@ -99,10 +100,10 @@ class Function(object):
       target.write(indent + "  callable:\n")
       self.callable.writeYaml(target, indent + indent_level)
       target.write(indent + "  arguments:\n")
-      for arg in self.arguments.values():
+      for arg in sorted(self.arguments.values(), key=lambda arg: arg.data.address): 
          arg.writeYaml(target, indent + indent_level)
       target.write(indent + "  results:\n")
-      for arg in self.results.values():
+      for arg in sorted(self.results.values(), key=lambda result: result.data.address):
          arg.writeYaml(target, indent + indent_level)
 
 class Callable(object):
@@ -226,13 +227,14 @@ class Symbol(object):
       
       self.is_relevant = False
 
-      for package_name in extractor.package_names:
+      for (mangled_package_name, package_name) \
+         in extractor.mangled_package_name_to_package_name.items():
          
-         input_name_regex = 'kaleidoscope::remote_call::' + package_name \
+         input_name_regex = 'kaleidoscope::remote_call::' + mangled_package_name \
             + '::(_______package_______|_______inputs_______|_______function_______|_______info_______)' \
             + '(::([\w:]+))?'
 
-         input_info_match = re.match(input_name_regex, self.name_unmangled)
+         input_info_match = regex.match(input_name_regex, self.name_unmangled)
          
          if input_info_match == None:
             continue
@@ -254,7 +256,7 @@ class Symbol(object):
             self.symbol_type = SYMBOL_TYPE_MODULE_MEMBER
             
             input_data_regex = '(\w+)::_______info_______::(\w+)'
-            input_data_match = re.match(input_data_regex, rest)
+            input_data_match = regex.match(input_data_regex, rest)
             
             if not input_data_match:
                logging.error("Strange input data \'" + rest + "\'")
@@ -274,7 +276,7 @@ class Symbol(object):
             self.symbol_type = SYMBOL_TYPE_PROCEDURE
                
             proc_info_regex = '(\w+)::_______info_______::(\w+)'
-            proc_data_match = re.match(proc_info_regex, rest)
+            proc_data_match = regex.match(proc_info_regex, rest)
             
             if proc_data_match:
                self.proc_name = proc_data_match.group(1)
@@ -282,19 +284,21 @@ class Symbol(object):
             else:
                
                args_info_regex = '(\w+)::(_______arguments_______|_______results_______)::(\w+)::_______info_______::(\w+)'
-               data_match = re.match(args_info_regex, rest)
+               data_match = regex.match(args_info_regex, rest)
                
                if data_match:
                   if data_match.group(2) == "_______arguments_______":
-                     self.symbol_type = SYMBOL_TYPE_PROCEDURE_ARG
+                     self.symbol_type = SYMBOL_TYPE_FUNCTION_ARG
                   elif data_match.group(2) == "_______results_______":
-                     self.symbol_type = SYMBOL_TYPE_PROCEDURE_RESULT
+                     self.symbol_type = SYMBOL_TYPE_FUNCTION_RESULT
                      
                   self.proc_name = data_match.group(1)
-                  self.bio_name = data_match.group(3)
+                  self.io_name = data_match.group(3)
                   self.info_type = data_match.group(4)
                else:
-                  logging.error("Strange function args data \'" + rest + "\'") 
+                  self.is_relevant = False
+                  break
+                  #logging.error("Strange function args data \'" + rest + "\'") 
          else:
             # Do not report an error to enable nested packages
             pass
@@ -426,7 +430,7 @@ class SymbolExtractor(object):
       in_data_lines = False 
       for line in lines:
          if in_data_lines:
-            data_block = re.match(data_regex, line)
+            data_block = regex.match(data_regex, line)
             
             if not data_block:
                logging.error('Unable to find data block for section \'' + section_name \
@@ -437,7 +441,7 @@ class SymbolExtractor(object):
             block_regex = "([\da-fA-F][\da-fA-F])"
             for token in tokens:
                
-               for byte in re.findall(block_regex, token):
+               for byte in regex.findall(block_regex, token):
                   data.append(int(byte, 16))
          else:
             if line.find('Contents of section') != -1: 
@@ -488,7 +492,7 @@ class SymbolExtractor(object):
    
    def readRelocationLine(self, line, symbol):
       
-      match = re.match("\d+ \w+\s+(\S+)", line)
+      match = regex.match("\d+ \w+\s+(\S+)", line)
       reloc_target = match.group(1)
       
       if match == None:
@@ -500,15 +504,15 @@ class SymbolExtractor(object):
          target = self.getPackage(symbol.package_name)
       elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE:
          target = self.getPackageFunction(symbol.package_name, symbol.proc_name)
-      elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
+      elif symbol.symbol_type == SYMBOL_TYPE_FUNCTION_ARG:
          target = self.getPackageFunction(symbol.package_name, symbol.proc_name).getArgument(symbol.proc_arg)
-      elif symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT:
+      elif symbol.symbol_type == SYMBOL_TYPE_FUNCTION_RESULT:
          target = self.getPackageFunction(symbol.package_name, symbol.proc_name).getResult(symbol.proc_arg)
       else:
          logging.error("Strange symbol type " + str(symbol.symbol_type))
          dump_object(symbol, sys.stdout, indent_level)
       
-      match = re.match("\.text\.(\w+)", reloc_target)
+      match = regex.match("\.text\.(\w+)", reloc_target)
       
       if match:
          target.callable \
@@ -517,7 +521,7 @@ class SymbolExtractor(object):
       else:
          #print "target: " + reloc_target
       
-         match = re.match("\.(bss|data)\.(\w+)(\+([\da-fA-Fx]+))?", reloc_target)
+         match = regex.match("\.(bss|data)\.(\w+)(\+([\da-fA-Fx]+))?", reloc_target)
          if match:
             target.data.symbol_mangled = match.group(2)
             target.data.symbol_unmangled = self.demangleSymbolName(match.group(2))
@@ -555,7 +559,7 @@ class SymbolExtractor(object):
             
             self.readRelocationLine(line, symbol)
             
-         reloc_line_match = re.match(base_reloc_regex, line)
+         reloc_line_match = regex.match(base_reloc_regex, line)
          
          if not reloc_line_match:
             continue
@@ -581,28 +585,44 @@ class SymbolExtractor(object):
    def readPackages(self, objdump_output):
       
       package_regex = "\.(\w+kaleidoscope[0-9]+remote_call[0-9]+\S+)"
-      package_candidates = unique(re.findall(package_regex, objdump_output))
+      package_candidates = unique(regex.findall(package_regex, objdump_output))
       
-      self.package_names = []
-      package_cand_regex = "kaleidoscope::remote_call::([:\w]+)::_______package_______"
+      self.mangled_package_name_to_package_name = {}
+      #package_cand_regex = "kaleidoscope::remote_call::((?P<package>\w+)::)+_______package_______"
+      package_cand_regex = "kaleidoscope::remote_call::([\w:]+)::_______package_______"
       
       for package_candidate in package_candidates:
          package_candidate_unmangled = self.demangleSymbolName(package_candidate)
          
-         match = re.match(package_cand_regex, package_candidate_unmangled)
+         match = regex.match(package_cand_regex, package_candidate_unmangled)
          
          if match:
-            package_name = match.group(1)
             
-            if not package_name in self.package_names:
-               self.package_names.append(package_name)
+            mangled_package_name = match.group(1)
+            
+            # Package namespace are named like _______package42_______ThePackageName
+            # This is because due to implementation details every invocation to
+            # KRC_PACKAGE(...) must generate an individual namespace. The
+            # same package can thus have different C++ namespace names with
+            # different integer numbers.
+            #
+            # Therefore, we must map such mangled namespace names to unique
+            # package namespace names.
+            #
+            namespaces_match = regex.match("(_______package(?P<id>\d+)_______(?P<name>\w+):*:*)+", mangled_package_name)
+            
+            namespace_tokens = namespaces_match.captures("name")
+            
+            package_name = "::".join(namespace_tokens)
+            
+            self.mangled_package_name_to_package_name[mangled_package_name] = package_name
          
    def extractPackageInfo(self, objdump_output):
       
       print ""
       
       package_regex = '\.(\w+kaleidoscope[0-9]+remote_call\w+)'
-      symbol_names_mangled = unique(re.findall(package_regex, objdump_output))
+      symbol_names_mangled = unique(regex.findall(package_regex, objdump_output))
       
       for symbol_name_mangled in symbol_names_mangled:
          
@@ -662,15 +682,20 @@ class SymbolExtractor(object):
             else:
                logging.error("Strange package function info type \'" + symbol.info_type + "\'")
                
-         elif (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG) \
-            or (symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_RESULT):
+         elif (symbol.symbol_type == SYMBOL_TYPE_FUNCTION_ARG) \
+            or (symbol.symbol_type == SYMBOL_TYPE_FUNCTION_RESULT):
+
+            # Ignore void results and arguments
+            #
+            if symbol.io_name == "_______void_______":
+               continue
             
             proc = self.getPackageFunction(symbol.package_name, symbol.proc_name)
             
-            if symbol.symbol_type == SYMBOL_TYPE_PROCEDURE_ARG:
-               target = proc.getArgument(symbol.bio_name)
+            if symbol.symbol_type == SYMBOL_TYPE_FUNCTION_ARG:
+               target = proc.getArgument(symbol.io_name)
             else:
-               target = proc.getResult(symbol.bio_name)
+               target = proc.getResult(symbol.io_name)
             
             if symbol.info_type == "description":
                data = self.getValueFromSection(symbol.name_mangled)
@@ -714,7 +739,7 @@ class SymbolExtractor(object):
             continue
          
          if parse_next_line:
-            address_line_match = re.match(address_line_regex, line)
+            address_line_match = regex.match(address_line_regex, line)
             
             if not address_line_match:
                logging.error("Strange address line \'" + line + "\'")
@@ -728,7 +753,7 @@ class SymbolExtractor(object):
             
             continue
          
-         text_match = re.match(text_regex, line)
+         text_match = regex.match(text_regex, line)
          
          if not text_match:
             continue
@@ -823,6 +848,9 @@ class SymbolExtractor(object):
       
       for function in package.functions.values():
          self.resolveFunctionArgsAbsAddressProc(function)
+         
+      for sub_package in package.packages.values():
+         self.resolveFunctionArgsAbsAddress(sub_package)
          
    def computeFileHash64(self, filename):
       

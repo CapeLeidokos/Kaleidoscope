@@ -483,10 +483,10 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    _KRC_START_NAMESPACE(_______arguments_______)                        __NL__ \
                                                                         __NL__ \
       struct StructType {                                               __NL__ \
-         MAP(_KRC_IO_DATA_STRUCT_MEMBER, __VA_ARGS__)                   __NL__ \
+         MAP(_KRC_IO_DATA_STRUCT_MEMBER,   __VA_ARGS__)                 __NL__ \
       };                                                                __NL__ \
                                                                         __NL__ \
-      MAP(_KRC_IO_DATUM, __VA_ARGS__)                                   __NL__ \
+      MAP(_KRC_IO_DATUM,   __VA_ARGS__)                                 __NL__ \
                                                                         __NL__ \
       _KRC_IO_DATA_ADD_DATA_TYPE(StructType)                            __NL__ \
                                                                         __NL__ \
@@ -534,6 +534,24 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
       __VA_ARGS__                                                       __NL__ \
    _KRC_END_NAMESPACE(NAME)                                             __NL__ \
    } /* namespace _______function_______ */
+
+#define KRC_VOID_RESULT ((uint8_t, _______void_______))
+#define KRC_VOID_ARGS ((uint8_t, _______void_______))
+   
+// A convenience version of the KRC_FUNCTION macro.
+//
+#define KRC_F(NAME, BRACED_RESULTS_LIST, BRACED_ARGUMENTS_LIST,                \
+              BRACED_BODY, ...)                                                \
+   KRC_FUNCTION(NAME,                                                          \
+      KRC_RESULTS(UNWRAP BRACED_RESULTS_LIST)                     \
+      KRC_ARGUMENTS(UNWRAP BRACED_ARGUMENTS_LIST)                 \
+      KRC_FUNCTION_BODY(                                                       \
+         auto args = KRC_ACCESS_ARGS();                                 __NL__ \
+         auto results = KRC_ACCESS_RESULTS();                           __NL__ \
+         UNWRAP BRACED_BODY                                             __NL__ \
+      )                                                                        \
+      __VA_ARGS__                                                              \
+   )
    
 #define KALEIDOSCOPE_REMOTE_CALL_END                                           \
    _KRC_GLOBAL_FINISH_SYMBOL_EXPORTS                                           \
