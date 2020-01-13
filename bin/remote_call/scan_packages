@@ -13,9 +13,6 @@ import subprocess
 import logging
 import copy
 
-# For ARV, RAM (SRAM) starts at addr 0x0000000000800000
-ram_memory_offset = int("0x0000000000800000", 16)
-
 type_ids = { \
    0 : "uint8_t", \
    1 : "uint16_t", \
@@ -30,7 +27,7 @@ indent_level = "   "
 
 SYMBOL_TYPE_NONE = 0
 SYMBOL_TYPE_MODULE = 1
-SYMBOL_TYPE_MODULE_MEMBER = 2
+SYMBOL_TYPE_INPUT = 2
 SYMBOL_TYPE_PROCEDURE = 3
 SYMBOL_TYPE_FUNCTION_ARG = 4
 SYMBOL_TYPE_FUNCTION_RESULT = 5
@@ -253,7 +250,7 @@ class Symbol(object):
             self.info_type = rest
          elif sub_type == "_______inputs_______":
             
-            self.symbol_type = SYMBOL_TYPE_MODULE_MEMBER
+            self.symbol_type = SYMBOL_TYPE_INPUT
             
             input_data_regex = '(\w+)::_______info_______::(\w+)'
             input_data_match = regex.match(input_data_regex, rest)
@@ -329,6 +326,9 @@ class SymbolExtractor(object):
       parser.add_argument('--yaml_output_file', \
                            help = 'The filename of a yaml output file to create',
                            default = '')
+      parser.add_argument('--ram_start_address', \
+                           help = 'The hex load address of the start of RAM', \
+                           default = "0x800000") # Default value for AVR
       
       args = parser.parse_args()
       
@@ -336,6 +336,7 @@ class SymbolExtractor(object):
       self.binutils_dir = args.binutils_dir
       self.binutils_prefix = args.binutils_prefix
       self.yaml_output_file = args.yaml_output_file
+      self.ram_start_address = int(args.ram_start_address, 16)
       
    def findBuildArtifacts(self):
       
@@ -498,7 +499,7 @@ class SymbolExtractor(object):
       if match == None:
          logging.error("Strange reloc info line: \'" + line + "\'")
          
-      if symbol.symbol_type == SYMBOL_TYPE_MODULE_MEMBER:
+      if symbol.symbol_type == SYMBOL_TYPE_INPUT:
          target = self.getInput(symbol.package_name, symbol.input_name)
       elif symbol.symbol_type == SYMBOL_TYPE_MODULE:
          target = self.getPackage(symbol.package_name)
@@ -647,7 +648,7 @@ class SymbolExtractor(object):
             else:
                logging.error("Strange package info type \'" + symbol.info_type + "\'")
                
-         elif symbol.symbol_type == SYMBOL_TYPE_MODULE_MEMBER:
+         elif symbol.symbol_type == SYMBOL_TYPE_INPUT:
             
             target = self.getInput(symbol.package_name, symbol.input_name)
             
@@ -794,8 +795,8 @@ class SymbolExtractor(object):
          dump_object(data)
       
       if data.symbol_unmangled in self.unmangled_symbol_to_address.keys():
-         data.address = int(self.unmangled_symbol_to_address[data.symbol_unmangled], 16) + data.offset - ram_memory_offset
-         data.base_address = int(self.unmangled_symbol_to_address[data.symbol_unmangled], 16) - ram_memory_offset
+         data.address = int(self.unmangled_symbol_to_address[data.symbol_unmangled], 16) + data.offset - self.ram_start_address
+         data.base_address = int(self.unmangled_symbol_to_address[data.symbol_unmangled], 16) - self.ram_start_address
       else:
          data.address = "unexported"
          data.base_address = "unexported"
@@ -819,8 +820,8 @@ class SymbolExtractor(object):
          callable.inherited = True
          
    def resolveFunctionIODatum(self, datum):
-      datum.data.address = self.args_start + datum.data.offset - ram_memory_offset
-      datum.data.base_address = self.args_start - ram_memory_offset
+      datum.data.address = self.args_start + datum.data.offset - self.ram_start_address
+      datum.data.base_address = self.args_start - self.ram_start_address
       datum.data.symbol_unmangled = self.args_symbol_unmangled
          
    def resolveFunctionArgsAbsAddressProc(self, function):

@@ -5,7 +5,7 @@
 namespace kaleidoscope {
 namespace remote_call {
    void exportSymbols();
-   extern void *_______function_io_______;
+   extern void * const _______function_io_______;
 } /* namespace remote_call */
 } /* namespace kaleidoscope */
 
@@ -132,7 +132,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
       IODataUnion<__COUNTER__> _______function_io_union_______;         __NL__ \
       KRC_EXPORT_VARIABLE(::kaleidoscope::remote_call                   __NL__ \
          ::_______function_io_union_______)                             __NL__ \
-      void *_______function_io_______                                   __NL__ \
+      void *const _______function_io_______                             __NL__ \
             = &_______function_io_union_______;                         __NL__ \
    } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
@@ -212,6 +212,16 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
          NAMESPACE::SymbolExporter<CNTR>::eval();                       __NL__ \
       }                                                                 __NL__ \
    };
+   
+#if __AVR__
+   
+#define _KRC_READ_FUNCTION_POINTER_ASM(FUNC)                                   \
+   "ldi r26, lo8(%0)" :: "p" (FUNC)
+#define _KRC_READ_GLOBAL_VARIABLE_POINTER_ASM(VAR)                             \
+   "" : "+r" (VAR)
+#else
+#error Please define appropriate assembly code that reads the pointer of a function
+#endif
 
 // Collects symbol export of a namespace and ensures that it will
 // be considered by the surrounding namespace.
@@ -226,7 +236,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
       __attribute__((always_inline))                                    __NL__ \
       static void eval() {                                              __NL__ \
          asm volatile(                                                  __NL__ \
-            "ldi r26, lo8(%0)" :: "p" (FUNC));                          __NL__ \
+            _KRC_READ_FUNCTION_POINTER_ASM(FUNC));                      __NL__ \
                                                                         __NL__ \
          SymbolExporter<CNTR - 1>::eval();                              __NL__ \
       }                                                                 __NL__ \
@@ -244,7 +254,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
    {                                                                    __NL__ \
       __attribute__((always_inline))                                    __NL__ \
       static void eval() {                                              __NL__ \
-         asm volatile("" : "+r" (VAR));                                 __NL__ \
+         asm volatile(_KRC_READ_GLOBAL_VARIABLE_POINTER_ASM(VAR));      __NL__ \
                                                                         __NL__ \
          SymbolExporter<CNTR - 1>::eval();                              __NL__ \
       }                                                                 __NL__ \
@@ -396,7 +406,7 @@ KRC_MEMBER_TYPE_TRAIT(float,       6)
 // kaleidoscope::remote_call. Therefore, we supply a dedicated macro to
 // define the outermost package level.
 //
-#define KRC_PACKAGE_ROOT(PACKAGE_NAME, ...)                                    \
+#define KRC_ROOT_PACKAGE(PACKAGE_NAME, ...)                                    \
    namespace kaleidoscope {                                             __NL__ \
    namespace remote_call {                                              __NL__ \
       KRC_PACKAGE(PACKAGE_NAME, __VA_ARGS__)                            __NL__ \
@@ -576,22 +586,24 @@ namespace remote_call {
 
 _KRC_GLOBAL_INIT_SYMBOL_EXPORT
 _KRC_GLOBAL_INIT_IO_DATA
+
+#define KALEIDOSCOPE_REMOTE_CALL(...) __VA_ARGS__
    
 #else // #ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
 
 // If the remote call module is disabled, we need at least an empty
 // symbol export function.
 //
-#define _KRC_GLOBAL_FINISH_SYMBOL_EXPORTS                                      \
+#define KALEIDOSCOPE_REMOTE_CALL_END                                           \
    namespace kaleidoscope {                                             __NL__ \
    namespace remote_call {                                              __NL__ \
       void exportSymbols() {}                                           __NL__ \
    } /* namespace remote_call */                                        __NL__ \
    } /* namespace kaleidoscope */
+   
+#define KALEIDOSCOPE_REMOTE_CALL(...)
 
 #endif // #ifndef KALEIDOSCOPE_REMOTE_CALL_DISABLED
-
-#define KALEIDOSCOPE_REMOTE_CALL(...) __VA_ARGS__
 
 #else
 

@@ -137,13 +137,22 @@ extern kaleidoscope::plugin::LEDControl LEDControl;
 extern kaleidoscope::plugin::FocusLEDCommand FocusLEDCommand;
 
 KALEIDOSCOPE_REMOTE_CALL(
-   KRC_PACKAGE_ROOT(plugin,
+   KRC_ROOT_PACKAGE(plugin,
       KRC_PACKAGE(LEDControl,
-         KRC_F(setCrgbAt2, KRC_VOID_RESULT, ((uint8_t, row), (uint8_t, col), 
-                                (uint8_t, red), (uint8_t, green), (uint8_t, blue)),
-               (LEDControl.setCrgbAt(KeyAddr{args->row, args->col}, 
-                                     CRGB(args->red, args->green, args->blue));),
-               KRC_DESCRIPTION("Sets the LED color of a single key")
+         KRC_F(setCrgbAt, KRC_VOID_RESULT, 
+            ((uint8_t, row), (uint8_t, col), 
+             (uint8_t, red), (uint8_t, green), (uint8_t, blue)),
+            (LEDControl.setCrgbAt(KeyAddr{args->row, args->col}, 
+                                  CRGB(args->red, args->green, args->blue));),
+            KRC_DESCRIPTION("Sets the LED color of a single key")
+         )
+         KRC_F(setMode, KRC_VOID_RESULT, ((uint8_t, mode_id)),
+            (LEDControl.set_mode(args->mode_id);),
+            KRC_DESCRIPTION("Sets the LED mode")
+         )
+         KRC_F(getMode, ((uint8_t, mode_id)), KRC_VOID_ARGS,
+            (results->mode_id = LEDControl.get_mode_index();),
+            KRC_DESCRIPTION("Queries the LED mode")
          )
       )
    )
